@@ -12,11 +12,9 @@ The thesis was written entirely in [R Markdown](https://rmarkdown.rstudio.com/),
 
 - `output/` contains the following files:
 
-...`00-CompiledReport.docx`, which is the knitted document produced from `00-CompiledReport.Rmd` in the `source/` folder.
-
-...`PhDThesis_Revised_DannyWong_20200808_OnlineVersion.docx` is a document that I made using `00-CompiledReport.docx`, performing formatting tweaks within Microsoft Word, e.g. adding a Table of Figures and Table of Tables, and fixing up some other final aesthetics.
-
-...`PhDThesis_Revised_DannyWong_20200808_OnlineVersion.pdf` is the final saved thesis in `.pdf` format, ready for printing and submission.
+>`00-CompiledReport.docx`, which is the knitted document produced from `00-CompiledReport.Rmd` in the `source/` folder.
+>`PhDThesis_Revised_DannyWong_20200808_OnlineVersion.docx` is a document that I made using `00-CompiledReport.docx`, performing formatting tweaks within Microsoft Word, e.g. adding a Table of Figures and Table of Tables, and fixing up some other final aesthetics.
+>`PhDThesis_Revised_DannyWong_20200808_OnlineVersion.pdf` is the final saved thesis in `.pdf` format, ready for printing and submission.
 
 # Caveats
 
