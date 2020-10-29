@@ -1,0 +1,623 @@
+---
+title: 'Chapter 3: Organisational Survey'
+subtitle: "Results from Part 1 of SNAP-2: EPICCS (Organisational Survey)"
+author: "Danny Wong"
+date: "16 April 2019"
+csl: ../references/bib/the-lancet.csl
+bibliography: ../references/bib/SNAP2.bib
+link-citations: yes
+description: "This is Chapter 3 of Danny's PhD Thesis"
+output: 
+  word_document:
+    reference_docx: styles.docx
+---
+
+# Organisational Survey
+
+```{r OrgSurv_setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=2, digits=2)
+
+library(tidyverse)
+library(tableone)
+library(ggplot2)
+library(labelled)
+library(pander)
+library(sjPlot)
+panderOptions('table.split.table', Inf)
+
+#Load data
+Org_Survey_Data_UK_Site <- read.csv("../data/Org_Survey_Data_Site.csv")
+Org_Survey_Data_UK_Enhanced <- read.csv("../data/Org_Survey_Data_Enhanced.csv")
+Org_Survey_Data_UK_CCU <- read.csv("../data/Org_Survey_Data_CCU.csv")
+Org_Survey_Data_Aus_Site <- read.csv("../data/Org_Survey_Data_Aus_Site.csv")
+Org_Survey_Data_Aus_Enhanced <- read.csv("../data/Org_Survey_Data_Aus_Enhanced.csv")
+Org_Survey_Data_Aus_CCU <- read.csv("../data/Org_Survey_Data_Aus_CCU.csv")
+Org_Survey_Data_NZ_Site <- read.csv("../data/Org_Survey_Data_NZ_Site.csv")
+Org_Survey_Data_NZ_Enhanced <- read.csv("../data/Org_Survey_Data_NZ_Enhanced.csv")
+Org_Survey_Data_NZ_CCU <- read.csv("../data/Org_Survey_Data_NZ_CCU.csv")
+
+#Assign UK SiteCodes
+Org_Survey_SiteCode_key <- read.csv("../data/Org_Survey_SiteCode_key.csv")
+Org_Survey_Data_UK_Site <- left_join(Org_Survey_Data_UK_Site, Org_Survey_SiteCode_key, by = c("trustName", "hospitalName")) %>%
+  select(-X.x, -X.y) %>% 
+  select(SiteCode, responseID:ortho) %>%
+  arrange(SiteCode)
+
+#Repeat again for the Enhanced Ward dataframe
+Org_Survey_Data_UK_Enhanced <- left_join(Org_Survey_Data_UK_Enhanced, Org_Survey_SiteCode_key, by = c("trustName", "hospitalName")) %>%
+  select(-X.x, -X.y) %>% 
+  select(SiteCode, responseID:epidural) %>%
+  arrange(SiteCode) %>%
+  mutate(country = ifelse(grepl("Scotland", trustName), "Scotland", 
+                          ifelse(grepl("Wales", trustName), "Wales", 
+                                 ifelse(grepl("Northern Ireland", trustName), "N.I.", "England"))))
+
+#Repeat again for the CCU dataframe
+Org_Survey_Data_UK_CCU <- left_join(Org_Survey_Data_UK_CCU, Org_Survey_SiteCode_key, by = c("trustName", "hospitalName")) %>%
+  select(-X.x, -X.y) %>% 
+  select(SiteCode, responseID:ccuFreeText) %>%
+  arrange(SiteCode) %>%
+  mutate(country = ifelse(grepl("Scotland", trustName), "Scotland", 
+                          ifelse(grepl("Wales", trustName), "Wales", 
+                                 ifelse(grepl("Northern Ireland", trustName), "N.I.", "England"))))
+
+#A bit of cleanup
+Org_Survey_Data_UK_Site <- Org_Survey_Data_UK_Site %>% 
+  mutate(ccuBedsTot = replace(ccuBedsTot, which(is.na(ccuBedsTot) & (icu == FALSE | hdu == FALSE)), 0)) %>%
+  mutate(ccuRatio = ccuBedsTot/hospitalBeds * 100) %>%
+  mutate(country = ifelse(grepl("Scotland", trustName), "Scotland", 
+                          ifelse(grepl("Wales", trustName), "Wales", 
+                                 ifelse(grepl("Northern Ireland", trustName), "N.I.", "England"))))
+
+#Repeat for Australia
+Org_Survey_Data_Aus_Site <- Org_Survey_Data_Aus_Site %>% 
+  mutate(ccuBedsTot = replace(ccuBedsTot, which(is.na(ccuBedsTot) & (icu == FALSE | hdu == FALSE)), 0)) %>%
+  mutate(ccuRatio = ccuBedsTot/hospitalBeds * 100) %>%
+  mutate(country = c("Aus")) %>%
+  mutate(genSurgNurseDay = as.integer(genSurgNurseDay))
+
+Org_Survey_Data_Aus_CCU <- Org_Survey_Data_Aus_CCU %>%
+  mutate(country = c("Aus"))
+
+Org_Survey_Data_Aus_Enhanced <- Org_Survey_Data_Aus_Enhanced %>%
+  mutate(country = c("Aus"))
+
+#Repeat for NZ
+Org_Survey_Data_NZ_Site <- Org_Survey_Data_NZ_Site %>% 
+  mutate(ccuBedsTot = replace(ccuBedsTot, which(is.na(ccuBedsTot) & (icu == FALSE | hdu == FALSE)), 0)) %>%
+  mutate(ccuRatio = ccuBedsTot/hospitalBeds * 100) %>%
+  mutate(country = c("N.Z."))
+
+Org_Survey_Data_NZ_CCU <- Org_Survey_Data_NZ_CCU %>%
+    mutate(country = c("N.Z."))
+
+Org_Survey_Data_NZ_Enhanced <- Org_Survey_Data_NZ_Enhanced %>%
+    mutate(country = c("N.Z."))
+
+#Join the tables for UK, Aus and NZ together
+Org_Survey_Data_Site <- Org_Survey_Data_UK_Site %>% 
+  select(which(names(.) %in% names(Org_Survey_Data_Aus_Site))) %>%
+  bind_rows(Org_Survey_Data_Aus_Site) %>%
+  bind_rows(Org_Survey_Data_NZ_Site) %>%
+  mutate(nurseDayRatio = genSurgAveBeds/genSurgNurseDay,
+         nurseNightRatio = genSurgAveBeds/genSurgNurseNight,
+         hcaDayRatio = genSurgAveBeds/genSurgHcaDay,
+         hcaNightRatio = genSurgAveBeds/genSurgHcaNight) %>%
+  select(-X) %>%
+  mutate(country = factor(country, levels = c("England", "Scotland", "Wales", "N.I.", "Aus", "N.Z."))) %>%
+  mutate(countryAgg = recode(country, 
+                             `England` = "UK",
+                             `Scotland` = "UK",
+                             `Wales` = "UK",
+                             `N.I.` = "UK",
+                             `Aus` = "Aus",
+                             `N.Z.` = "NZ"))
+
+Org_Survey_Data_CCU <- Org_Survey_Data_UK_CCU %>% 
+  select(which(names(.) %in% names(Org_Survey_Data_Aus_CCU))) %>%
+  bind_rows(Org_Survey_Data_Aus_CCU) %>%
+  bind_rows(Org_Survey_Data_NZ_CCU) %>%
+  select(-X) %>%
+  mutate(country = factor(country, levels = c("England", "Scotland", "Wales", "N.I.", "Aus", "N.Z."))) %>%
+  mutate(countryAgg = recode(country, 
+                             `England` = "UK",
+                             `Scotland` = "UK",
+                             `Wales` = "UK",
+                             `N.I.` = "UK",
+                             `Aus` = "Aus",
+                             `N.Z.` = "NZ")) %>%
+  mutate(ccuAdmitOther = replace(ccuAdmitOther, which(ccuAdmitOther == TRUE & ccuSpecialty == "General/Mixed"), NA))
+
+Org_Survey_Data_Enhanced <- Org_Survey_Data_UK_Enhanced %>% 
+  select(which(names(.) %in% names(Org_Survey_Data_Aus_Enhanced))) %>%
+  bind_rows(Org_Survey_Data_Aus_Enhanced) %>%
+  bind_rows(Org_Survey_Data_NZ_Enhanced) %>%
+  select(-X) %>%
+  mutate(country = factor(country, levels = c("England", "Scotland", "Wales", "N.I.", "Aus", "N.Z."))) %>%
+  mutate(countryAgg = recode(country, 
+                             `England` = "UK",
+                             `Scotland` = "UK",
+                             `Wales` = "UK",
+                             `N.I.` = "UK",
+                             `Aus` = "Aus",
+                             `N.Z.` = "NZ"))
+  
+consult_spec <- Org_Survey_Data_Enhanced$enhancedWardConsult %>% table() %>% as.data.frame() %>% mutate(Percent = (Freq/sum(Freq) * 100))
+
+summary_table <- consult_spec %>% arrange(Freq) %>% mutate(Responsibility = c("Mixed", "Mixed", "Mixed", "Mixed", "Mixed", "Intensivist", "Other", "Anaesthetist", "Mixed", "Surgeon")) %>% group_by(factor(Responsibility)) %>% summarise(Frequency = sum(Freq))
+
+#Create a dummy variable for whether the hospital employs HCAs
+Org_Survey_Data_Site <- Org_Survey_Data_Site %>%
+  mutate(HCAs = ifelse((genSurgHcaDay > 0 | genSurgHcaNight > 0), TRUE, FALSE)) %>%
+  mutate(HCAs = replace(HCAs, which(is.na(HCAs)), FALSE))
+
+#Calculate the per capita critical care bed numbers using OECD data
+per_capita_ccu <- Org_Survey_Data_Site %>% 
+  mutate(enhancedWardBedsTot = replace(enhancedWardBedsTot, which(is.na(enhancedWardBedsTot)), 0)) %>%
+  mutate(critCareTot = enhancedWardBedsTot) %>%
+  group_by(countryAgg) %>%
+  summarise(totalHospitalBeds = sum(hospitalBeds, na.rm = T),
+            totalCCUBeds = sum(ccuBedsTot, na.rm = T),
+            totalICUBeds = sum(ventBedsTot, na.rm = T),
+            totalCCUEnhanceBeds = sum(critCareTot, na.rm = T)) %>%
+  mutate(ccuRatioNational = totalCCUBeds/totalHospitalBeds * 100,
+         icuRatioNational = totalICUBeds/totalHospitalBeds * 100,
+         ccuEnhanceRatioNational = totalCCUEnhanceBeds/totalHospitalBeds * 100) %>%
+  mutate(ccuPerCapita = ccuRatioNational/100 * c(260, 380, 270),
+         icuPerCapita = icuRatioNational/100 * c(260, 380, 270),
+         ccuEnhancePerCapita = ccuEnhanceRatioNational/100 * c(260, 380, 270))
+
+model1 <- lm(ccuBedsTot ~ hospitalBeds, data = Org_Survey_Data_Site)
+model2 <- lm(ccuBedsTot ~ hospitalBeds + !is.na(tertiaryServices), data = Org_Survey_Data_Site)
+model3 <- lm(ccuBedsTot ~ hospitalBeds * !is.na(tertiaryServices), data = Org_Survey_Data_Site)
+
+model4 <- lm(log(ccuBedsTot) ~ log(hospitalBeds), data = (Org_Survey_Data_Site %>% filter(ccuBedsTot > 0)))
+model5 <- lm(log(ccuBedsTot) ~ log(hospitalBeds) + !is.na(tertiaryServices), data = (Org_Survey_Data_Site %>% filter(ccuBedsTot > 0)))
+model6 <- glm(ccuBedsTot ~ hospitalBeds + !is.na(tertiaryServices), data = Org_Survey_Data_Site, family = poisson(link = log))
+model7 <- MASS::glm.nb(ccuBedsTot ~ hospitalBeds + (!is.na(tertiaryServices)), data = Org_Survey_Data_Site) #Negative Binomial Regression model
+model7_offset <- MASS::glm.nb(ccuBedsTot ~ hospitalBeds + (!is.na(tertiaryServices)) + offset(log(hospitalBeds)), data = Org_Survey_Data_Site)
+model8_UK <- MASS::glm.nb(ccuBedsTot ~ hospitalBeds + bariatrics + boneMarrowTx + burns + cardiothoracics + complexColorectal + complexCardiology + ecmo + hpb + hasu + majTrauma + maxFax + neurosurgery + transplants + upperGI + vascular + ortho + enhancedWard + ed + offset(log(hospitalBeds)), data = filter(Org_Survey_Data_Site, countryAgg == "UK"))
+model8_Aus <- MASS::glm.nb(ccuBedsTot ~ hospitalBeds + bariatrics + boneMarrowTx + burns + cardiothoracics + complexColorectal + complexCardiology + ecmo + hpb + hasu + majTrauma + maxFax + neurosurgery + transplants + upperGI + vascular + ortho + enhancedWard + ed + offset(log(hospitalBeds)), data = filter(Org_Survey_Data_Site, countryAgg == "Aus"))
+model8_NZ <- MASS::glm.nb(ccuBedsTot ~ hospitalBeds + bariatrics + boneMarrowTx + burns + cardiothoracics + complexColorectal + complexCardiology + ecmo + hpb + hasu + majTrauma + maxFax + neurosurgery + transplants + upperGI + vascular + ortho + enhancedWard + ed + offset(log(hospitalBeds)), data = filter(Org_Survey_Data_Site, countryAgg == "NZ"))
+model9 <- MASS::glm.nb(ccuBedsTot ~ hospitalBeds + (!is.na(tertiaryServices)) + countryAgg, data = Org_Survey_Data_Site)
+model10 <- MASS::glm.nb(ccuBedsTot ~ hospitalBeds + (!is.na(tertiaryServices)) + countryAgg + offset(log(hospitalBeds)), data = Org_Survey_Data_Site)
+model11 <- MASS::glm.nb(ccuBedsTot ~ hospitalBeds + (!is.na(tertiaryServices)) + countryAgg + enhancedWard + ed + offset(log(hospitalBeds)), data = Org_Survey_Data_Site)
+model12 <- glm(enhancedWard ~ scale(hospitalBeds) + (!is.na(tertiaryServices)) + countryAgg + ccuRatio + ed, data = Org_Survey_Data_Site, family = binomial)
+model13 <- MASS::glm.nb(ccuBedsTot ~ hospitalBeds + bariatrics + boneMarrowTx + burns + cardiothoracics + complexColorectal + complexCardiology + ecmo + hpb + hasu + majTrauma + maxFax + neurosurgery + transplants + upperGI + vascular + ortho + enhancedWard + ed + countryAgg + offset(log(hospitalBeds)), data = Org_Survey_Data_Site)
+```
+
+While surgery is a treatment for disease, complications from surgery are associated with significant morbidity and mortality [@khuri_determinants_2005; @moonesinghe_survival_2014]. Critical care is a complex intervention thought to mitigate against the risks of surgery, via the higher nurse-to-patient ratio, medical input from specialist intensivists, and availability of specific organ support therapies. As the global burden of surgery increases, the numbers of patients at risk of perioperative complications rises correspondingly. Therefore, the capacity to prospectively admit high-risk patients to critical care following surgery becomes an increasing population concern. 
+
+In the UK in 2011, the National Confidential Enquiry into Patient Outcome and Death (NCEPOD) recommended critical care admission when the preoperative estimated risk of mortality is &ge;5%, while the Royal College of Surgeons of England and the Department of Health recommended that those with mortality risks &ge;10% should be admitted [@findlay_knowing_2011; @anderson_higher_2011]. The risk thresholds set by the Royal College of Surgeons of England were later updated in 2018 to match NCEPOD recommendations [@lees_high-risk_2018]. However, in Australia and New Zealand (NZ), there are currently no national guidelines for risk stratifying postoperative critical care admissions.
+
+However, despite these guidelines, multiple observational studies assert that critical care resources may not be reliably allocated to patients at highest risk of death [@pearse_identification_2006; @pearse_mortality_2012; @the_international_surgical_outcomes_study_group_global_2016]. In some countries, a lack of critical care capacity is thought to contribute to this phenomenon [@adhikari_critical_2010]. Recent commentary suggests that alternative facilities are consequently being used to provide enhanced care to patients outside of the traditional Intensive Care and High Dependency Units (ICU/HDUs) in some hospitals in the UK [@batchelor_critical_2017]. These patient care areas may be able to provide a subset of the interventions and monitoring capabilities usually associated with critical care, and provide the necessary environment to manage the postoperative recovery of high-risk surgical patients.
+
+Therefore, the overall aim of the first part of SNAP-2: EPICCS, was to describe the provision of critical care, enhanced care and usual ward care for surgical patients in England, Scotland, Wales and Northern Ireland. This part comprises an Organisational Survey performed to assess the available critical care facilities in UK hospitals completed by participant site investigators.
+
+In this chapter the results of the survey will be presented. Further details of the statistical analysis underpinning these results will also be described. Parts of this chapter have now been peer-reviewed and published [@wong_postoperative_2019].
+
+## Aims and objectives
+
+The aim of the organisational survey was to describe the resources available in UK, Australian and New Zealand hospitals to deliver critical care to postoperative patients.
+
+The objectives were to:
+
+1. Describe the available ICU and HDU facilities in each responding hospital.
+2. Describe hospital-level characteristics which may influence the capacity to deliver critical care in hospitals.
+3. Describe the availability and provision of enhanced care ward beds which might potentially exist to augment critical care provision in some hospitals.
+
+## Methods
+
+### Survey development and pilot
+
+Survey questions were constructed using a modified Delphi consensus method [@brown_delphi_1968]. A study steering group was convened with representatives from the RCoA, Faculty of Intensive Care Medicine (FICM), Intensive Care Society, Association of Anaesthetists of Great Britain and Ireland, Royal College of Surgeons (England), and lay representation from a patient expert and the RCoA's Lay Committee [@the_royal_college_of_anaesthetists_lay_2017]. A full list of steering group members and their designations can be found in subsequent sections in this chapter. Draft survey questions were circulated among steering group members for anonymous feedback and evaluation (Round 1). The responses were anonymised and collated by an administrator (Miss Laura Farmer) acting as the Delphi process facilitator at the NIAA HSRC. Round 1 draft questions were then modified based on this feedback, and the questions then used to construct a pilot survey. The pilot survey was then re-circulated, along with anonymised feedback, to members of the steering group, and the survey was piloted in 8 hospitals. Following this pilot, a second cycle of anonymous feedback was then obtained on the survey questions and problems encountered with responding to the survey in the field (Round 2). The final survey was then constructed based on the responses from the Round 2.
+
+The survey questionnaire was designed in the UK. To facilitate international comparisons, no further changes were made to the questionnaire before it was distributed in Australia and NZ, this was agreed by consensus between the UK Central Project Team and the collaborating Australian and New Zealand team. We considered the terminology and definitions used in each country to be equivalent in their local contexts.
+
+### Survey content
+
+The final survey can be found in the *Appendix 1*. Data were collected on hospital-level characteristics, including: general hospital and adult Intensive Care/High Dependency Unit (ICU/HDU) bed numbers, types of tertiary services delivered within the hospital[^TertiaryServices], and the presence of an emergency department at the hospital. Also collected were data on Ward/Unit-level characteristics, including: staffing ratios and availability of critical care treatment modalities. Finally, where such pathways existed, data were collected on other high-acuity/enhanced ward areas where high risk adult patients would normally be admitted after surgery for increased levels of care[^EnhancedCareWards]. Responses for total hospital bed numbers included the estimated total number of secondary care beds within the hospital, which may include mental health, obstetrics, and paediatric beds if those were present in the site. 
+
+[^TertiaryServices]: The following is a list of 16 tertiary services which were sought in the survey. This list is based on specialised services commissioned by NHS England which have been grouped into six National Programmes of Care (https://www.england.nhs.uk/commissioning/spec-services/npc-crg/):	Bariatric surgery; Bone marrow transplants;	Burns care; Cardiothoracic surgery; Complex colorectal services, including intestinal failure; Complex interventional cardiology; Extracorporeal membrane oxygenation (ECMO); Hepatobiliary & pancreatic surgery; Hyper-acute stroke services; Major trauma; Maxillofacial surgery; Neurosurgery; Complex orthopaedic surgery; Solid organ transplants; Upper GI surgery; Vascular surgery.
+
+[^EnhancedCareWards]: These were defined as any other ward areas in the hospital other than the ICU/HDU which receive high-risk surgical patients for enhanced perioperative care, for one or more interventions normally associated with critical care, such as continuous monitoring, invasive blood pressure monitoring, vasoactive infusions, invasive ventilation, continuous positive airway pressure or non-invasive ventilation, epidural analgesia, or other specialist therapies.
+
+In order to quantify beds allocated postoperatively to surgical patients, surgery was defined as all procedures taking place in an operating theatre or radiology suite for which inpatient (overnight) stay was planned, including both planned and emergency/urgent surgery. For questions related to general ward-level beds (those not providing critical care), respondents were asked to include beds for all surgical subspecialties, including neurosurgery, cardiothoracic surgery, gynaecological surgery, etc. However, for this survey total surgical beds excluded obstetric and paediatric surgery beds.
+
+Details of each individual (physically separate) ICU/HDU was also collected, including: total number of funded critical care beds, maximum number of beds available for ventilated patients[^VentilatedPatients], whether the unit was an exclusively dedicated to ICU or HDU or a mixed unit with beds of both types, whether the unit was a specialised unit (e.g. a neurosurgical or cardiothoracic surgery unit), and if so whether patients from different specialties were permitted admission when needs arose.
+
+Characteristics of individual high-acuity/enhanced care areas within the hospital, if present, were requested: bed numbers, the number of patients typically cared for by a single nurse in the area, and the clinician specialty of the consultant clinically responsible for patients admitted into these beds. The types of clinical interventions which patients are able to receive when admitted to these beds was collected: continuous monitoring, invasive blood pressure monitoring, vasoactive infusions, mechanical ventilation for patients with endotracheal tubes, non-invasive mechanical ventilation or continuous positive airway pressure, and epidural analgesia.
+
+Finally, free-text responses were permitted for some sections of the survey, and respondent contact details were collected in order to facilitate communication when responses needed clarification.
+
+[^VentilatedPatients]: Patients with respiratory failure requiring invasive mechanical ventilatory support via an endotracheal tube or tracheostomy are considered patients requiring the highest level of critical care (Level 3 Intensive Care)[@intensive_care_society_levels_2009]. The number of beds designated as available for ventilated patients (i.e. able to deliver mechanical ventilation) was therefore taken to be a surrogate measure of the number of Level 3 ICU beds available on the unit.
+
+### Survey distribution
+
+The survey was conducted between Thursday 01 December 2016 and Friday 31 March 2017 in the UK, and between 01 December 2016 and 01 January 2018 in Australia and New Zealand. Lead collaborators in hospitals who participated in the previous Sprint National Anaesthesia Project (SNAP-1) [@walker_patient_2016], and the Royal College of Anaesthetists' (RCoA) network of Quality Audit and Research Coordinators (QuARCs[^QuARCs]) were approached to answer an electronic questionnaire in the UK. The SNAP-1 and QuARC collaborators consist of anaesthetists working in NHS hospitals throughout the UK. In Australia, the Australian Society of Anaesthetists (ASA) state representatives network and Australian and New Zealand College of Anaesthetists Clinical Trials Network (ANZCA CTN) were used to distribute the survey within their respective regions, and two cycles of reminders were sent via both networks. In NZ, correspondence was maintained with individual investigators at each site until data collection was completed. Further details about the research network infrastructure are described in later sections of this chapter.
+
+Lead collaborators at each site were encouraged to answer survey questions based on their own knowledge of their hospitals' structures and processes, and to approach senior hospital and nursing management teams for more difficult to obtain data. As the level of data reporting for the survey was at individual hospital site, each participant was only required to return a single response, however, where hospitals operated across more than one geographical site, individual responses were received for each separate location.
+
+The survey was distributed electronically using online forms (FormAssembly, Veer West LLC, Bloomington, Indiana, USA) to all collaborators at sites in the UK, and electronically via e-mail to investigators at sites in Australia and NZ.
+
+### Statistical analyses
+
+Descriptive statistics for the characteristics of responding hospitals were computed. Details of critical care units and enhanced care areas were similarly described. Critical care bed ratios are calculated per 100 hospital beds for each participating site, based on the number of critical care and hospital beds reported by survey respondents. Critical care bed ratios per 100,000 population in the UK were estimated by combining population-level data from external datasets published by the Organisation for Economic Co-operation and Development (OECD) [@organisation_for_economic_co-operation_and_development_oecd_hospital_2018]. 
+
+A comparison of characteristics of hospitals, critical care units and enhanced care units between each country was conducted. Univariate analysis was performed to compare characteristics of hospitals, critical care units and high-acuity care areas between each participating country, using appropriate statistical tests for continuous and categorical variables. 
+
+Hypothesising that critical care capacity would be related to tertiary services provided, I investigated the association between critical care bed provision at each site and variables thought to influence critical care bed capacity, using negative binomial regression, as appropriate for count data. The response variable of critical care beds per 100 hospital beds was regressed against the following covariates: number of hospital beds; tertiary services offered; country where the hospital was located; whether high-acuity care beds were present within the hospital; and whether the hospital had an emergency department. Relative ratios (RR) were calculated using the models to express the relative difference in critical care bed numbers associated with a particular variable, after adjusting for hospital size and other variables in the model. I further investigated the characteristics associated with the likelihood of hospitals having high-acuity care areas using logistic regression, the binary outcome variable of whether high-acuity care areas were present or absent was regressed against the following covariates: number of hospital beds; whether tertiary services were offered; country; the critical care:hospital bed ratio; and whether the hospital had an emergency department.
+
+For both negative binomial and logistic regression modelling, models were constructed first from a null model (with no covariates), with individual covariates added in sequence based on their perceived importance. Models were compared using Akaike's Information Criterion (AIC) [@akaike_new_1974]. Final models were chosen based on their explanatory value and lowest AIC.
+
+### Sensitivity analysis
+
+Due to the lower national response rate from Australian sites compared to the UK and NZ, I conducted a *post hoc* sensitivity analysis comparing the hospital characteristics of the respondent sites with a published dataset of hospitals offering surgical services from the Australian Institute of Health and Welfare to determine if the survey sample was biased [@australian_institute_of_health_and_welfare_myhospitals_2017]. The collected data from the Organisational Survey were matched by hospital name to this external published dataset which categorised hospitals by type.
+
+## Results
+
+### Overview of responses
+
+Responses were received from `r nrow(Org_Survey_Data_Site)` hospitals across the UK, Australia and NZ. 
+
+In the UK, `r nrow(Org_Survey_Data_Site %>% filter(country %in% c("England", "Scotland", "Wales", "N.I.")))` hospitals responded out of the 263 invited to participate (response rate `r nrow(Org_Survey_Data_UK_Site)/263 * 100`%); these hospitals were nested within `r Org_Survey_Data_UK_Site %>% filter(!(grepl("Scotland", trustName) | grepl("Wales", trustName) | grepl("Northern Ireland", trustName))) %>% select(trustName) %>% unique() %>% nrow() -2` English NHS Trusts, `r Org_Survey_Data_UK_Site %>% filter(grepl("Scotland", trustName)) %>% select(trustName) %>% unique() %>% nrow()` Scottish NHS Boards, `r Org_Survey_Data_UK_Site %>% filter(grepl("Wales", trustName)) %>% select(trustName) %>% unique() %>% nrow()` Welsh Health Boards, and `r Org_Survey_Data_UK_Site %>% filter(grepl("Northern Ireland", trustName)) %>% select(trustName) %>% unique() %>% nrow()` Northern Irish Health and Social Care Trusts[^UKTrustsDenominator]. The UK sample therefore represented `r (Org_Survey_Data_UK_Site %>% select(trustName) %>% unique() %>% nrow() -2) / 173 * 100`% of NHS secondary care organisations providing adult inpatient surgical services in the UK. 
+
+[^UKTrustsDenominator]: Denominator data for UK hospitals and NHS Trusts was obtained from published sources maintained by NHS organisations [@nhs_confederation_nhs_2017; @nhs_england_cancelled_2018; @nhs_scotland_organisations_2017; @nhs_wales_nhs_2006].
+
+In Australia, 107 hospitals were invited to participate, with `r nrow(Org_Survey_Data_Site %>% filter(country == "Aus"))` sites responding (response rate `r nrow(Org_Survey_Data_Site %>% filter(country %in% c("Aus")))/107 * 100`%). In NZ, 18 hospitals were invited to participate, with `r nrow(Org_Survey_Data_Site %>% filter(country == "N.Z."))` sites responding (response rate `r nrow(Org_Survey_Data_Site %>% filter(country %in% c("N.Z.")))/18 * 100`%). 
+
+### Hospital characteristics
+
+The median reported hospital size in the survey sample was `r median(Org_Survey_Data_Site$hospitalBeds, na.rm = TRUE)` beds (IQR = `r quantile(Org_Survey_Data_Site$hospitalBeds, na.rm = TRUE, probs = 0.25)`&ndash;`r quantile(Org_Survey_Data_Site$hospitalBeds, na.rm = TRUE, probs = 0.75)`, Table 3-1). Australian (median `r median((Org_Survey_Data_Site %>% filter(country == "Aus"))$hospitalBeds, na.rm = TRUE)` beds, IQR `r quantile((Org_Survey_Data_Site %>% filter(country == "Aus"))$hospitalBeds, na.rm = TRUE, probs = 0.25)`&ndash;`r quantile((Org_Survey_Data_Site %>% filter(country == "Aus"))$hospitalBeds, na.rm = TRUE, probs = 0.75)` beds) and NZ (median `r median((Org_Survey_Data_Site %>% filter(country == "N.Z."))$hospitalBeds, na.rm = TRUE)` beds, IQR `r quantile((Org_Survey_Data_Site %>% filter(country == "N.Z."))$hospitalBeds, na.rm = TRUE, probs = 0.25)`&ndash;`r quantile((Org_Survey_Data_Site %>% filter(country == "N.Z."))$hospitalBeds, na.rm = TRUE, probs = 0.75)` beds) hospitals were not significantly different in size to those in the UK (median `r median((Org_Survey_Data_Site %>% filter(country %in% c("England", "Scotland", "Wales", "N.I.")))$hospitalBeds, na.rm = TRUE)` beds, IQR `r quantile((Org_Survey_Data_Site %>% filter(country %in% c("England", "Scotland", "Wales", "N.I.")))$hospitalBeds, na.rm = TRUE, probs = 0.25)`&ndash;`r quantile((Org_Survey_Data_Site %>% filter(country %in% c("England", "Scotland", "Wales", "N.I.")))$hospitalBeds, na.rm = TRUE, probs = 0.75)` beds).
+
+The majority of responding hospitals were acute hospitals with emergency departments on-site (n = `r sum(Org_Survey_Data_Site$ed == TRUE)`, `r sum(Org_Survey_Data_Site$ed == TRUE) / nrow(Org_Survey_Data_Site) * 100`%). `r nrow(Org_Survey_Data_Site %>% filter(!is.na(tertiaryServices)))` hospitals (`r nrow(Org_Survey_Data_Site %>% filter(!is.na(tertiaryServices)))/nrow(Org_Survey_Data_Site) * 100`%) provided tertiary services. However, a higher proportion of hospitals in Australia (n = `r nrow(Org_Survey_Data_Site %>% filter(country == "Aus") %>% filter(!is.na(tertiaryServices)))`, `r nrow(Org_Survey_Data_Site %>% filter(country == "Aus") %>% filter(!is.na(tertiaryServices)))/nrow(Org_Survey_Data_Site %>% filter(country == "Aus")) * 100`%) and NZ (n = `r nrow(Org_Survey_Data_Site %>% filter(country == "N.Z.") %>% filter(!is.na(tertiaryServices)))`, `r nrow(Org_Survey_Data_Site %>% filter(country == "N.Z.") %>% filter(!is.na(tertiaryServices)))/nrow(Org_Survey_Data_Site %>% filter(country == "N.Z.")) * 100`%) in this study were tertiary institutions than those in the UK (n = `r nrow(Org_Survey_Data_Site %>% filter(!(country %in% c("Aus", "N.Z."))) %>% filter(!is.na(tertiaryServices)))`, `r nrow(Org_Survey_Data_Site %>% filter(!(country %in% c("Aus", "N.Z."))) %>% filter(!is.na(tertiaryServices)))/nrow(Org_Survey_Data_Site %>% filter(!(country %in% c("Aus", "N.Z.")))) * 100`%).
+
+```{r OrgSurv_Table3-1, echo=FALSE}
+myVars_site <- c("hospitalBeds", "ed", "ccuBedsTot", "ventBedsTot", "ccuRatio", "genSurgTotalBeds", "pacu", "enhancedWard", "tertiaryServices")
+Org_Survey_Data_Site <- Org_Survey_Data_Site %>%
+  set_variable_labels(hospitalBeds = "Total hospital beds", ed = "Emergency department present", ccuBedsTot = "Total critical care beds", ventBedsTot = "Total ventilated beds", ccuRatio = "Proportion of critical care beds per 100 hospital beds", genSurgTotalBeds = "Total general surgical ward beds", pacu = "Post-Anaesthesia Care Unit (PACU) present", enhancedWard = "High-acuity care area present", tertiaryServices = "Tertiary services provided") 
+
+table_1a <- CreateTableOne(data = (Org_Survey_Data_Site %>% mutate(tertiaryServices = !is.na(tertiaryServices))), vars = myVars_site, strata = "countryAgg")
+table_1b <- CreateTableOne(data = (Org_Survey_Data_Site %>% mutate(tertiaryServices = !is.na(tertiaryServices))), vars = myVars_site)
+
+cbind(print(table_1b, printToggle = FALSE, noSpaces = TRUE, nonnormal = c("hospitalBeds", "ccuBedsTot", "ventBedsTot", "ccuRatio", "genSurgTotalBeds"), 
+            varLabels = TRUE), 
+      print(table_1a, printToggle = FALSE, noSpaces = TRUE, nonnormal = c("hospitalBeds", "ccuBedsTot", "ventBedsTot", "ccuRatio", "genSurgTotalBeds"), 
+            test = TRUE, varLabels = TRUE)) %>% 
+  pander(caption = "Table 3-1: Summary of hospital characteristics.")
+```
+
+### Critical care beds
+
+Most hospitals reported having on-site ICU/HDU facilities (n = `r sum(Org_Survey_Data_Site$icu | Org_Survey_Data_Site$hdu)`, `r sum(Org_Survey_Data_Site$icu | Org_Survey_Data_Site$hdu) / nrow(Org_Survey_Data_Site) * 100`%), with a median ratio of `r median(Org_Survey_Data_Site$ccuRatio, na.rm = TRUE)` (IQR `r quantile(Org_Survey_Data_Site$ccuRatio, probs = 0.25, na.rm = TRUE)`&ndash;`r quantile(Org_Survey_Data_Site$ccuRatio, probs = 0.75, na.rm = TRUE)`) critical care beds per 100 hospital beds. `r nrow(Org_Survey_Data_CCU)` separate critical care units were described within `r sum(Org_Survey_Data_Site$icu | Org_Survey_Data_Site$hdu)` hospitals across all 3 countries (Table 3-2). `r table(Org_Survey_Data_CCU$ccuSpecialty)["General/Mixed"]` of these units (`r table(Org_Survey_Data_CCU$ccuSpecialty)["General/Mixed"]/nrow(Org_Survey_Data_CCU) * 100`%) admitted patients from different specialties. However, `r filter(Org_Survey_Data_CCU, ccuSpecialty != "General/Mixed") %>% pull(hospitalName) %>% unique() %>% length()` hospitals (`r (filter(Org_Survey_Data_CCU, ccuSpecialty != "General/Mixed") %>% pull(hospitalName) %>% unique() %>% length())/nrow(Org_Survey_Data_CCU) * 100`%) reported having at least one specialist critical care unit, and there were `r nrow(Org_Survey_Data_CCU) - table(Org_Survey_Data_CCU$ccuSpecialty)["General/Mixed"]` such specialist units identified. Among these specialist units, `r table(Org_Survey_Data_CCU$ccuAdmitOther)["TRUE"]` (`r table(Org_Survey_Data_CCU$ccuAdmitOther)["TRUE"]/sum(table(Org_Survey_Data_CCU$ccuAdmitOther)) * 100`%) would admit patients from another specialty if necessary, with the remainder restricting admissions to patients from single specialties only (e.g. cardiothoracics, or neurosurgery).
+
+```{r OrgSurv_Table3-2, echo=FALSE}
+Org_Survey_Data_CCU <- Org_Survey_Data_CCU %>%
+  set_variable_labels(ccuBeds = "Total critical care beds", ventBeds = "Total ventilated beds", ccuMix = "ICU/HDU/Mixed", ccuSpecialty = "Specialty unit", ccuAdmitOther = "Will admit off-specialty patients")
+
+table_3a <- Org_Survey_Data_CCU %>% CreateTableOne(data = ., vars = c("ccuBeds", "ventBeds", "ccuMix", "ccuSpecialty", "ccuAdmitOther"), strata = "countryAgg")
+table_3b <- Org_Survey_Data_CCU %>% CreateTableOne(data = ., vars = c("ccuBeds", "ventBeds", "ccuMix", "ccuSpecialty", "ccuAdmitOther"))
+
+cbind(print(table_3b, printToggle = FALSE, noSpaces = TRUE, nonnormal = c("ccuBeds", "ventBeds"), varLabels = TRUE), 
+      print(table_3a, printToggle = FALSE, noSpaces = TRUE, nonnormal = c("ccuBeds", "ventBeds"), varLabels = TRUE)) %>% 
+  pander(caption = "Table 3-2: Summary of critical care unit characteristics.")
+```
+
+The median number of critical care beds across all units was `r median(Org_Survey_Data_CCU$ccuBeds)` (IQR `r quantile(Org_Survey_Data_CCU$ccuBeds, probs = 0.25)`&ndash;`r quantile(Org_Survey_Data_CCU$ccuBeds, probs = 0.75)`). The estimated number of critical care beds and ventilated beds per capita calculated using the survey sample was highest in Australia (Table 3-3).
+
+```{r results-a-OrgSurv_Table3-3, echo=FALSE}
+per_capita_ccu %>%
+  select(-totalHospitalBeds, -totalCCUBeds, -totalICUBeds, -totalCCUEnhanceBeds) %>%
+  rename(`Country` = countryAgg,
+         #`Total hospital beds in sample` = totalHospitalBeds,
+         #`Total critical care beds in sample` = totalCCUBeds,
+         #`Total ventilated beds in sample` = totalICUBeds,
+         `Critical care beds per 100 hospital beds` = ccuRatioNational,
+         `Ventilated beds per 100 hospital beds` = icuRatioNational,
+         `High-acuity care beds per 100 hospital beds` = ccuEnhanceRatioNational,
+         `Critical care beds per 100,000 population` = ccuPerCapita,
+         `Ventilated beds per 100,000 population` = icuPerCapita,
+         `High-acuity care beds per 100,000 population` = ccuEnhancePerCapita) %>%
+  pander(caption = "Table 3: Critical care and high-acuity care beds per capita. The sum of the number of critical care beds was divided by the sum of all hospital beds within each country, and multiplied by 100, to obtain the average ratio of critical care beds to hospital beds in each country. This ratio was then multiplied by OECD data on hospital beds per capita to obtain the per capita critical care bed numbers, rescaled to per 100,000 population.")
+```
+
+Hospitals offering tertiary services had `r exp(coef(model7_offset))["!is.na(tertiaryServices)TRUE"]` times (relative ratio [RR]) as many critical care beds per 100 hospital beds than those which did not offer any tertiary services (95% CI: `r exp(confint(model7_offset))["!is.na(tertiaryServices)TRUE", 1]`&ndash;`r exp(confint(model7_offset))["!is.na(tertiaryServices)TRUE", 2]`, p = `r coef(summary(model7_offset))["!is.na(tertiaryServices)TRUE", 4]`, Figure 3-1), after adjusting for other variables.
+
+```{r OrgSurv_Fig3-1, echo=FALSE, message=FALSE, warning=FALSE, dpi=300, fig.width=8, fig.height=6, fig.cap="Figure 3-1: Scatter plot of critical care beds vs. hospital size, with hospitals coloured by tertiary status. Lines of best fit as estimated using a negative binomial regression model illustrate the higher number of critical care beds in hospitals offering tertiary services, compared to hospitals not offering tertiary services."}
+Org_Survey_Data_Site <- Org_Survey_Data_Site %>% mutate(phat = predict(model7, type="response", newdata = Org_Survey_Data_Site))
+plot_a <- ggplot(Org_Survey_Data_Site, aes(x = hospitalBeds, 
+                                           y = phat, 
+                                           colour = !is.na(tertiaryServices))) +
+  geom_point(aes(y = ccuBedsTot), shape = 1) +
+  geom_line() +
+  labs(title = "Critical Care and Hospital Bed Numbers", 
+       subtitle = "(Negative Binomial Model)", 
+       x = "Total Hospital Beds", 
+       y = "Total Critical Care Beds") +
+  scale_color_manual(name = "Hospital type", 
+                     labels = c("No tertiary services", "Tertiary services offered"), 
+                     values = c("#e41a1c", "#377eb8")) +
+  theme_classic() +
+  theme(legend.position="bottom")
+
+plot_a
+```
+
+The provision of cardiothoracic (RR `r exp(coef(model13))["cardiothoracicsTRUE"]`, 95% CI `r exp(confint(model13))["cardiothoracicsTRUE", 1]`&ndash;`r exp(confint(model13))["cardiothoracicsTRUE", 2]`, p = `r coef(summary(model13))["cardiothoracicsTRUE", 4]`), neurosurgery (RR `r exp(coef(model13))["neurosurgeryTRUE"]`, 95% CI `r exp(confint(model13))["neurosurgeryTRUE", 1]`&ndash;`r exp(confint(model13))["neurosurgeryTRUE", 2]`, p = `r coef(summary(model13))["neurosurgeryTRUE", 4]`) and extracorporeal membrane oxygenation (RR `r exp(coef(model13))["ecmoTRUE"]`, 95% CI `r exp(confint(model13))["ecmoTRUE", 1]`&ndash;`r exp(confint(model13))["ecmoTRUE", 2]`, p = `r coef(summary(model13))["ecmoTRUE", 4]`) tertiary services were associated with increased proportions of critical care beds within hospitals (Figure 3-2, Table 3-4).
+
+```{r OrgSurv_Fig3-2, echo=FALSE, message=FALSE, warning=FALSE, dpi=300, fig.width=8, fig.height=6, fig.cap="Figure 3-2: Forest plot of associations between specialist services delivered and the relative availability of critical care beds per 100 hospital beds, after adjusting for hospital size, presence of enhanced ward areas, presence of emergency department and country."}
+library(sjlabelled)
+plot_labels <- c("Bariatric surgery",
+                 "Bone marrow transplants",
+                 "Maxillofacial surgery",
+                 "Complex cardiology",
+                 "Hyper-acute stroke",
+                 "Major trauma",
+                 "Burns care",
+                 "Vascular surgery",
+                 "Solid organ transplants",
+                 "Hepatobiliary surgery",
+                 "Upper GI surgery",
+                 "Complex colorectal",
+                 "Complex orthopaedics",
+                 "ECMO",
+                 "Neurosurgery",
+                 "Cardiothoracic surgery")
+set_theme(base = theme_classic())
+plot_b <- plot_model(model13, type = "est",
+                     sort.est = TRUE,
+                     #group.estimates = c(1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,1,3,3),
+                     rm.terms = c("hospitalBeds", "edTRUE", "enhancedWardTRUE", "countryAggAus", "countryAggNZ"),
+                     axis.labels = plot_labels,
+                     #show.values = TRUE,
+                     #value.offset = 0.4,
+                     axis.title = c("Relative Ratio"),
+                     axis.lim = c(0.75, 1.75),
+                     colors = "bw",
+                     title = "Tertiary Services and Critical Care Beds")
+
+plot_b
+```
+
+UK hospitals had a smaller proportion of critical care beds per 100 hospital beds (median `r median((filter(Org_Survey_Data_Site, country %in% c("England", "Scotland", "Wales", "N.I.")))$ccuRatio, na.rm = TRUE)`, IQR `r quantile((filter(Org_Survey_Data_Site, country %in% c("England", "Scotland", "Wales", "N.I.")))$ccuRatio, probs = 0.25, na.rm = TRUE)`&ndash;`r quantile((filter(Org_Survey_Data_Site, country %in% c("England", "Scotland", "Wales", "N.I.")))$ccuRatio, probs = 0.75, na.rm = TRUE)`) compared to hospitals in Australia (median `r median((filter(Org_Survey_Data_Site, country == "Aus"))$ccuRatio, na.rm = TRUE)`, IQR `r quantile((filter(Org_Survey_Data_Site, country == "Aus"))$ccuRatio, probs = 0.25, na.rm = TRUE)`&ndash;`r quantile((filter(Org_Survey_Data_Site, country == "Aus"))$ccuRatio, probs = 0.75, na.rm = TRUE)`) and NZ (median `r median((filter(Org_Survey_Data_Site, country == "N.Z."))$ccuRatio, na.rm = TRUE)`, IQR `r quantile((filter(Org_Survey_Data_Site, country == "N.Z."))$ccuRatio, probs = 0.25, na.rm = TRUE)`&ndash;`r quantile((filter(Org_Survey_Data_Site, country == "N.Z."))$ccuRatio, probs = 0.75, na.rm = TRUE)`). However, after adjusting for tertiary services delivered, and hospital size, the proportion of critical care beds to total hospital beds was lower in Australia (RR `r exp(coef(model13))["countryAggAus"]`, 95% CI `r exp(confint(model13))["countryAggAus", 1]`&ndash;`r exp(confint(model13))["countryAggAus", 2]`, p = `r coef(summary(model13))["countryAggAus", 4]`) and NZ (RR `r exp(coef(model13))["countryAggNZ"]`, 95% CI `r exp(confint(model13))["countryAggNZ", 1]`&ndash;`r exp(confint(model13))["countryAggNZ", 2]`, p = `r coef(summary(model13))["countryAggNZ", 4]`) than in the UK (Table 3-4 for model coefficients). Neither the presence of an emergency department, nor the presence of enhanced ward areas were associated with the proportion of critical care beds in any of the three countries.
+
+```{r OrgSurv_Table3-4, echo=FALSE, message=FALSE, warning=FALSE}
+nb_table2 <- as.data.frame(exp(coef(model13))) %>%
+  cbind(exp(confint(model13))) %>%
+  cbind(coef(summary(model13))[,4])
+
+colnames(nb_table2) <- c("Relative Count Ratio",
+                         "95% CI Lower Limit",
+                         "95% CI Upper Limit",
+                         "p-value")
+rownames(nb_table2) <- c("Intercept",
+                         "Hospital Beds",
+                         "Bariatric surgery",
+                         "Bone marrow transplants",
+                         "Burns care",
+                         "Cardiothoracic surgery",
+                         "Complex colorectal",
+                         "Complex cardiology",
+                         "Extracorporeal Membrane Oxygenation",
+                         "Hepatobiliary surgery",
+                         "Hyper-acute stroke",
+                         "Major trauma",
+                         "Maxillofacial surgery",
+                         "Neurosurgery",
+                         "Solid organ transplants",
+                         "Upper GI surgery",
+                         "Vascular surgery",
+                         "Complex orthopaedics",
+                         "High-acuity Care Area present",
+                         "Emergency Department present",
+                         "Australia",
+                         "New Zealand")
+                 
+pander(nb_table2, "Table 3-4: Negative binomial regression model with the number of critical care beds as a proportion of the total number of hospital beds in each hospital as the dependent variable, regressed against the number of hospital beds, specific types of tertiary specialist services offered, whether the hospital has an high-acuity care area, whether the hospital has an Emergency Department, and the country where the hospital is located.")
+```
+
+### High-acuity care areas
+
+`r unique(Org_Survey_Data_Enhanced$hospitalName) %>% length() %>% english::Words()` (`r (unique(Org_Survey_Data_Enhanced$hospitalName) %>% length())/nrow(Org_Survey_Data_Site) * 100`%) hospitals reported having high-acuity care areas where high risk surgical patients could be admitted for postoperative management outside the operating theatre or critical care complexes: `r table(filter(Org_Survey_Data_Site, countryAgg == "UK")$enhancedWard)["TRUE"]` hospitals in the UK (`r table(filter(Org_Survey_Data_Site, countryAgg == "UK")$enhancedWard)["TRUE"]/nrow(filter(Org_Survey_Data_Site, countryAgg == "UK")) * 100`% of hospitals); `r table(filter(Org_Survey_Data_Site, countryAgg == "Aus")$enhancedWard)["TRUE"]` in Australia (`r table(filter(Org_Survey_Data_Site, countryAgg == "Aus")$enhancedWard)["TRUE"]/nrow(filter(Org_Survey_Data_Site, countryAgg == "Aus")) * 100`%) and `r table(filter(Org_Survey_Data_Site, countryAgg == "NZ")$enhancedWard)["TRUE"]` in NZ (`r table(filter(Org_Survey_Data_Site, countryAgg == "NZ")$enhancedWard)["TRUE"]/nrow(filter(Org_Survey_Data_Site, countryAgg == "NZ")) * 100`%). A total of `r nrow(Org_Survey_Data_Enhanced)` such high-acuity care areas were identified (Table 3-5). These areas have a median `r median(Org_Survey_Data_Enhanced$enhancedWardBeds)` beds (IQR `r quantile(Org_Survey_Data_Enhanced$enhancedWardBeds, prob = 0.25)`&ndash;`r quantile(Org_Survey_Data_Enhanced$enhancedWardBeds, prob = 0.75)` beds), and a median nurse:patient ratio of 1:`r median(Org_Survey_Data_Enhanced$enhancedNurseRatio, na.rm = TRUE)` (IQR 1:`r quantile(Org_Survey_Data_Enhanced$enhancedNurseRatio, prob = 0.25, na.rm = TRUE)`&ndash;1:`r quantile(Org_Survey_Data_Enhanced$enhancedNurseRatio, prob = 0.75, na.rm = TRUE)`). Patient care was led by surgeons in `r nrow(filter(Org_Survey_Data_Enhanced, enhancedWardConsult == "Surgeon"))` (`r nrow(filter(Org_Survey_Data_Enhanced, enhancedWardConsult == "Surgeon"))/nrow(Org_Survey_Data_Enhanced) * 100`%) of these high-acuity care areas.
+
+```{r OrgSurv_Table3-5, echo=FALSE, message=FALSE, warning=FALSE}
+Org_Survey_Data_Enhanced <- Org_Survey_Data_Enhanced %>%
+  set_variable_labels(enhancedWardBeds = "Total beds", enhancedNurseRatio = "Patient:Nurse ratio", enhancedWardConsult = "Responsible specialty consultant", continuousObs = "Able to provide continuous observations/monitoring", invasiveBP = "Able to provide invasive blood pressure monitoring", vasoactives = "Able to manage vasoactive infusions", ventilation = "Able to provide invasive ventilation", NIV = "Able to provide non-invasive ventilation/continuous positive airway pressure (NIV/CPAP)", epidural = "Able to manage epidural catheters")
+
+table_4a <- Org_Survey_Data_Enhanced %>%
+  mutate(enhancedWardConsult = recode(enhancedWardConsult, 
+                                      `Intensivist,Other (please elaborate)` = "Multi-specialty Joint Care",
+                                      `Intensivist,Surgeon` = "Multi-specialty Joint Care",
+                                      `Perioperative Anaesthetist,Intensivist` = "Multi-specialty Joint Care",
+                                      `Perioperative Anaesthetist,Other (please elaborate)` = "Multi-specialty Joint Care",
+                                      `Perioperative Anaesthetist,Surgeon` = "Multi-specialty Joint Care",
+                                      `Surgeon,Other (please elaborate)` = "Multi-specialty Joint Care")) %>%
+  CreateTableOne(data = ., vars = c("enhancedWardBeds", "enhancedNurseRatio", "enhancedWardConsult", "continuousObs", "invasiveBP", "vasoactives", "ventilation", "NIV", "epidural"), strata = "countryAgg")
+table_4b <- Org_Survey_Data_Enhanced %>% 
+  mutate(enhancedWardConsult = recode(enhancedWardConsult, 
+                                      `Intensivist,Other (please elaborate)` = "Multi-specialty Joint Care",
+                                      `Intensivist,Surgeon` = "Multi-specialty Joint Care",
+                                      `Perioperative Anaesthetist,Intensivist` = "Multi-specialty Joint Care",
+                                      `Perioperative Anaesthetist,Other (please elaborate)` = "Multi-specialty Joint Care",
+                                      `Perioperative Anaesthetist,Surgeon` = "Multi-specialty Joint Care",
+                                      `Surgeon,Other (please elaborate)` = "Multi-specialty Joint Care")) %>%
+  CreateTableOne(data = ., vars = c("enhancedWardBeds", "enhancedNurseRatio", "enhancedWardConsult", "continuousObs", "invasiveBP", "vasoactives", "ventilation", "NIV", "epidural"))
+
+cbind(print(table_4b, printToggle = FALSE, noSpaces = TRUE, nonnormal = c("enhancedWardBeds", "enhancedNurseRatio"), varLabels = TRUE), 
+      print(table_4a, printToggle = FALSE, noSpaces = TRUE, nonnormal = c("enhancedWardBeds", "enhancedNurseRatio"), varLabels = TRUE)) %>% 
+  pander(caption = "Table 3-5: Summary of high-acuity care area characteristics")
+```
+
+These areas were able to deliver a heterogeneous subset of interventions normally associated with critical care (Table 3-5), ranging from continuous observations and monitoring (n = `r nrow(filter(Org_Survey_Data_Enhanced, continuousObs == TRUE))`, `r nrow(filter(Org_Survey_Data_Enhanced, continuousObs == TRUE))/nrow(Org_Survey_Data_Enhanced) * 100`%), to Non-Invasive Ventilation (NIV) or Continuous Positive Airways Pressure (CPAP) support (n = `r nrow(filter(Org_Survey_Data_Enhanced, NIV == TRUE))`, `r nrow(filter(Org_Survey_Data_Enhanced, NIV == TRUE))/nrow(Org_Survey_Data_Enhanced) * 100`%).
+
+Larger hospitals (adjusted Odds Ratio [OR] `r exp(coef(model12)["scale(hospitalBeds)"])` for every standard deviation increase in hospital bed numbers, 95% CI `r exp(confint(model12))["scale(hospitalBeds)", 1]`&ndash;`r exp(confint(model12))["scale(hospitalBeds)", 2]`, p = `r coef(summary(model12))["scale(hospitalBeds)", 4]`) providing tertiary services (adjusted OR `r exp(coef(model12)["!is.na(tertiaryServices)TRUE"])`, 95% CI `r exp(confint(model12))["!is.na(tertiaryServices)TRUE", 1]`&ndash;`r exp(confint(model12))["!is.na(tertiaryServices)TRUE", 2]`, p = `r coef(summary(model12))["!is.na(tertiaryServices)TRUE", 4]`) were more likely to report having high-acuity care areas. Hospitals with emergency departments (adjusted OR `r exp(coef(model12)["edTRUE"])`, 95% CI `r exp(confint(model12))["edTRUE", 1]`&ndash;`r exp(confint(model12))["edTRUE", 2]`, p = `r coef(summary(model12))["edTRUE", 4]`) were less likely to report having these types of beds. Full coefficients for the logistic regression model are available in Table 3-6.
+
+```{r OrgSurv_Table3-6, echo=FALSE, message=FALSE, warning=FALSE}
+logit_table <- as.data.frame(exp(coef(model12))) %>%
+  cbind(exp(confint(model12))) %>%
+  cbind(coef(summary(model12))[,4])
+
+colnames(logit_table) <- c("Odds Ratio",
+                           "95% CI Lower Limit",
+                           "95% CI Upper Limit",
+                           "p-value")
+rownames(logit_table) <- c("Intercept",
+                           "Hospital Beds (scaled)",
+                           "Tertiary services offered",
+                           "Australia",
+                           "New Zealand",
+                           "Critical care:Hospital bed ratio",
+                           "Emergency Department present")
+pander(logit_table, "Table 3-6: Logistic regression model of whether high-acuity care areas are reported in a hospital as the dependent variable, regressed against hospital size (centred around the mean, and rescaled to a standard deviation scale), whether the hospital offers tertiary specialist services, the country where the hospital is located, the critical care bed to total hospital bed ratio, and whether the hospital has an Emergency Department.")
+```
+
+After critical care and high-acuity bed numbers were considered together, the total potential per capita capacity for delivering at least some critical care to postoperative patients increases in all three countries (Table 3-3).
+
+### General surgical wards
+
+Across all three countries, hospitals reported a median ratio of `r median((Org_Survey_Data_Site$genSurgTotalBeds / Org_Survey_Data_Site$hospitalBeds), na.rm = TRUE) * 100` surgical beds per 100 hospital beds (IQR `r quantile((Org_Survey_Data_Site$genSurgTotalBeds / Org_Survey_Data_Site$hospitalBeds * 100), na.rm = TRUE, probs = 0.25)`&ndash;`r quantile((Org_Survey_Data_Site$genSurgTotalBeds / Org_Survey_Data_Site$hospitalBeds * 100), na.rm = TRUE, probs = 0.75)`). The average surgical ward was reported as having a median `r median(Org_Survey_Data_Site$genSurgAveBeds, na.rm = TRUE)` beds (IQR `r quantile(Org_Survey_Data_Site$genSurgAveBeds, prob = 0.25, na.rm = TRUE)`&ndash;`r quantile(Org_Survey_Data_Site$genSurgAveBeds, prob = 0.75, na.rm = TRUE)` beds). The median nurse:patient ratio during the day time was 1:`r median(Org_Survey_Data_Site$nurseDayRatio, na.rm = TRUE)` (IQR 1:`r quantile(Org_Survey_Data_Site$nurseDayRatio, prob = 0.25, na.rm = TRUE)`&ndash;1:`r quantile(Org_Survey_Data_Site$nurseDayRatio, prob = 0.75, na.rm = TRUE)`, Table 5), and this ratio dropped to a median of 1:`r median(Org_Survey_Data_Site$nurseNightRatio, na.rm = TRUE)` nurse:patients (IQR 1:`r quantile(Org_Survey_Data_Site$nurseNightRatio, prob = 0.25, na.rm = TRUE)`&ndash;1:`r quantile(Org_Survey_Data_Site$nurseNightRatio, prob = 0.75, na.rm = TRUE)`) at night. 
+
+General surgical ward nurses in the UK were responsible for more beds per nurse than in Australia or NZ, both in the day and at night (Table 3-7, p <0.001). The majority of UK (n = `r table(Org_Survey_Data_Site$HCAs, Org_Survey_Data_Site$countryAgg)["TRUE", "UK"]`, `r table(Org_Survey_Data_Site$HCAs, Org_Survey_Data_Site$countryAgg)["TRUE", "UK"]/nrow(filter(Org_Survey_Data_Site, countryAgg == "UK")) * 100`%) and NZ (n = `r table(Org_Survey_Data_Site$HCAs, Org_Survey_Data_Site$countryAgg)["TRUE", "NZ"]`, `r table(Org_Survey_Data_Site$HCAs, Org_Survey_Data_Site$countryAgg)["TRUE", "NZ"]/nrow(filter(Org_Survey_Data_Site, countryAgg == "NZ")) * 100`%) hospitals reported staffing surgical wards with health care assistants to supplement the care delivered by nurses. In contrast, health care assistants were less commonly employed in Australia with only `r table(Org_Survey_Data_Site$HCAs, Org_Survey_Data_Site$countryAgg)["TRUE", "Aus"]` hospitals (`r table(Org_Survey_Data_Site$HCAs, Org_Survey_Data_Site$countryAgg)["TRUE", "Aus"]/nrow(filter(Org_Survey_Data_Site, countryAgg == "Aus")) * 100`%) reporting their deployment on surgical wards.
+
+```{r OrgSurv_Table3-7, echo=FALSE, message=FALSE, warning=FALSE}
+Org_Survey_Data_Site <- Org_Survey_Data_Site %>%
+  set_variable_labels(genSurgAveBeds = "Number of beds", genSurgNurseDay = "Number of nurses (day)", nurseDayRatio = "Beds:Nurse ratio (day)", genSurgNurseNight = "Number of nurses (night)", nurseNightRatio = "Beds:Nurse ratio (night)", genSurgHcaDay = "Number of care assistants (day)", hcaDayRatio = "Beds:care assistant ratio (day)", genSurgHcaNight = "Number of care assistants (night)", hcaNightRatio = "Beds:care assistant ratio (night)", HCAs = "Health Care Assistants utilised")
+  
+table_5a <- Org_Survey_Data_Site %>% CreateTableOne(data = ., vars = c("genSurgAveBeds", "genSurgNurseDay", "nurseDayRatio", "genSurgNurseNight", "nurseNightRatio", "HCAs"), strata = "countryAgg")
+table_5b <- Org_Survey_Data_Site %>% CreateTableOne(data = ., vars = c("genSurgAveBeds", "genSurgNurseDay", "nurseDayRatio", "genSurgNurseNight", "nurseNightRatio", "HCAs"))
+
+cbind(print(table_5b, printToggle = FALSE, noSpaces = TRUE, 
+            nonnormal = c("genSurgAveBeds", "genSurgNurseDay", "nurseDayRatio", "genSurgNurseNight", 
+                          "nurseNightRatio"), 
+            varLabels = TRUE, test = FALSE),
+      print(table_5a, printToggle = FALSE, noSpaces = TRUE, 
+            nonnormal = c("genSurgAveBeds", "genSurgNurseDay", "nurseDayRatio", "genSurgNurseNight", 
+                          "nurseNightRatio"), 
+            varLabels = TRUE, test = TRUE)) %>% 
+        pander(caption = "Table 3-7: Summary of general ward staffing levels.")
+```
+
+### Sensitivity Analysis for Australian Hospital Sample
+
+Due to the lower response rate in Australian hospitals invited to participate in the study, A sensitivity analysis was performed to examine the extent to which the Australian hospitals were subject to sampling bias. Openly-published data of hospitals offering surgical services from the Australian Institute of Health and Welfare were obtained which included data on the number of specialist services offered at the hospital, and a classification of hospital type [@australian_institute_of_health_and_welfare_myhospitals_2017]. Children's hospitals, small rural hospitals, and hospitals not offering surgery were excluded from this open dataset as they were not considered comparable to hospitals in the UK. 
+
+The characteristics (state regions, hospital groups and numbers of specialist services offered) of the hospitals in our study sample was compared against the characteristics for all hospitals in Australia. 
+
+The distribution of hospital types, regions and the number of specialist services offered within sites responding to the survey was examined and compared with the overall distribution of the same factors in all hospitals in Australia (Table 3-8). 
+
+```{r OrgSurv_Table3-8, echo=FALSE, message=FALSE, warning=FALSE}
+# Load libraries
+library(tidyverse)
+library(readxl)
+library(fuzzyjoin)
+library(tableone)
+
+# Load the open data
+Open_Data_Surgery <- read_excel("../data/myhospitals-elective-surgery.xlsx", skip = 14) %>%
+  select(Hospital, State, Group = `Peer group`) %>%
+  distinct()
+Open_Data_Services <- read_excel("../data/myhospitals-hospital-services-data.xlsx", skip = 5) %>%
+  group_by(Hospital) %>%
+  tally()
+Open_Data_Surgery <- Open_Data_Surgery %>% left_join(Open_Data_Services, by = "Hospital") %>%
+  rename(`Services_n` = "n") %>%
+  filter(Group %in% c("Large metropolitan hospitals",
+                      "Large regional hospitals",
+                      "Major hospitals",
+                      "Medium metropolitan hospitals",
+                      "Unpeered"))
+
+# Load the Organisational Survey data
+Org_Survey_Aus_Site <- read.csv("../data/Org_Survey_Data_Aus_Site.csv")
+
+# Try a fuzzyjoin
+x <- stringdist_left_join(Org_Survey_Aus_Site, Open_Data_Surgery, 
+                          by = c(hospitalName = "Hospital"), distance_col = NULL) %>%
+  select(hospitalName, Hospital, hospitalBeds, State, Group, Services_n)
+
+# write.csv(Open_Data_Surgery, "data/Australian_Open_Data.csv")
+# write.csv(x, "data/Australian_Org_Survey.csv")
+
+# Went to join the remaining by hand
+Org_Survey_Aus_Site <- read.csv("../data/Australian_Org_Survey.csv", stringsAsFactors = FALSE)
+
+sensitivity_table_3_8a <- CreateTableOne(data = Open_Data_Surgery,
+               vars = c("State", "Group", "Services_n")) %>%
+  print(nonnormal = "Services_n", printToggle = FALSE, noSpaces = TRUE)
+
+sensitivity_table_3_8b <- CreateTableOne(data = Org_Survey_Aus_Site,
+               vars = c("State", "Group", "Services_n")) %>%
+  print(nonnormal = "Services_n", printToggle = FALSE, noSpaces = TRUE)
+
+sensitivity_table_3_8 <- cbind(sensitivity_table_3_8a, sensitivity_table_3_8b)
+colnames(sensitivity_table_3_8) <- c("Overall", "Survey Respondents")
+rownames(sensitivity_table_3_8)[17] <- "Number of tertiary services available (median [IQR])"
+
+sensitivity_table_3_8 %>% pander("Table 3-8: Characteristics of hospitals sampled within this study compared to overall characteristics of all hospitals in Australia. Abbreviations for state names: ACT = Australian Capital Territory; NSW = New South Wales; NT = Northern Territory; Qld = Queensland; SA = South Australia; Tas = Tasmania; Vic = Victoria; WA = Western Australia.")
+```
+
+
+The survey sampled `r nrow(filter(Org_Survey_Aus_Site, Group == "Major hospitals"))` hospitals which were classed as "Major Hospitals" (`r nrow(filter(Org_Survey_Aus_Site, Group == "Major hospitals"))/nrow(Org_Survey_Aus_Site) * 100`%), although this category comprised `r nrow(filter(Open_Data_Surgery, Group == "Major hospitals"))/nrow(Open_Data_Surgery) * 100`% of all hospitals in Australia. The median number of specialist services offered by hospitals in the survey sample was also higher than the overall median for hospitals in Australia. Finally, the survey received a disproportionately high proportion of responses from the state of Victoria, and a lower proportion of responses from New South Wales.
+
+Therefore, when interpreting the results of the survey, one needs to consider that the Australian data sample is weighted towards medium-to-large hospitals offering more specialist services.
+
+## Discussion
+
+### Principal Findings
+
+In this chapter, I have presented a comprehensive overview of postoperative critical care facilities available for patients undergoing inpatient surgery in the UK, Australia and NZ. This survey describes the critical care provision in hospitals within these countries, and quantifies the availability of high-acuity care areas where postoperative patients may receive critical care therapies outside of the traditional ICU/HDU setting. Hospitals in NZ were generally smaller compared to the UK and Australia. The proportion of hospital beds which were dedicated to critical care was similar across the three countries, however the estimated per capita critical care capacity was highest in Australia. General surgery wards in Australia and NZ reported more favourable nurse:patient staffing ratios than the UK. High-acuity care areas delivering some critical care interventions were present in all three countries, and these were of similar size and nurse staffing ratios. The total potential per capita capacity for delivering at least some critical care to postoperative patients increases after these enhance care areas are considered.
+
+### Strengths and weaknesses
+
+This survey had nearly complete coverage of all UK and NZ public secondary care organisations that provide inpatient surgical care. The data collected is therefore likely to be an accurate representation of available postoperative facilities in both countries. 
+
+While NHS England collects data on critical care bed numbers, these are aggregated at Trust level, and not individual hospital site-level. In comparison, the Scottish Intensive Care Society Audit Group (SICSAG) publishes an annual audit report of critical care outcomes and facilities [@scottish_intensive_care_society_audit_group_audit_2017], while the national health authorities in Wales and Northern Ireland do not compile publicly accessible data of this nature for secondary analysis. The Australian New Zealand Intensive Care Society (ANZICS) publishes an annual report with information on the total number of adult intensive care units across Australia and NZ, which includes numbers of paediatric intensive care beds in their counts [@noauthor_anzics_2017]. This survey data are therefore comprehensive and robust, and contain information not routinely collected by national bodies in all three countries. A further key strength of this study is that it is the first empirical description of perioperative high-acuity care areas.
+
+There are however also some weaknesses to this work. 
+
+First, the response rate in Australia was lower than in the UK and NZ. Australian sites also required a longer period to respond to the survey due to the low initial response rate. The sensitivity analysis conducted showed that the Australian hospitals sampled in the survey was weighted towards medium-to-large major hospitals which provide postgraduate anaesthesia specialty training, and capable of delivering higher numbers of specialist services (Table 3-8). The reasons for this were likely due to less well-developed research infrastructure for observational health services research in Australia compared to the UK, which has had significant infrastructure development as a legacy from the first Sprint National Anaesthesia Project.
+
+Second, a higher proportion of NZ hospitals that responded were tertiary institutions. Larger tertiary institutions in Australia and NZ may have had increased motivation to participate in the survey, and survey dissemination via local networks may have favoured tertiary hospitals due to the nature of the networks used (the anaesthesia trainee research networks relied upon to distribute the survey are more likely to be found within larger tertiary hospitals). 
+
+Third, private sector hospitals were also not approached for the survey, and one is therefore unable to extrapolate the pathways which might exist in those institutions. Private healthcare providers provide a substantial proportion of elective surgical care, especially in Australia, where the spend on private healthcare as a proportion of total healthcare expenditure is higher compared to UK and NZ (UK: 21.9%, Australia: 31.9%, and NZ: 21.1% of healthcare spend) [@organisation_for_economic_co-operation_and_development_oecd_health_2018]. These differences in the national samples must be considered when considering the comparative data presented about the three countries. 
+
+Finally, due to the difference in population distributions in Australia and NZ, these nations have a large number of geographically dispersed small rural hospitals, usually without critical care provision, and linked to central hubs of secondary/tertiary care; these differences from the UK make direct comparisons of health systems difficult.
+
+### Defining critical care
+
+Historically, critical care bed capacity per capita in the UK, Australia and NZ has been found to be low compared to many other developed health systems [@adhikari_critical_2010; @rhodes_variability_2012]. However, research in this area is made difficult by the lack of international consensus in critical care definitions. 
+
+In the UK, Guidelines for the Provision of Intensive Care Services (GPICS) were recently published by the Faculty of Intensive Care Medicine and Intensive Care Society in 2015 [@masterson_guidelines_2015], following on from earlier publications which aimed to describe ICU/HDU standards in the UK [@intensive_care_society_levels_2009; @noauthor_core_2013]. In Australia and NZ, the College of Intensive Care Medicine (CICM) defines minimum standards for ICU and HDU in separate documents [@noauthor_minimum_2011; @noauthor_guidelines_2013].
+
+A Level 0-3 classification system has been adopted in the UK, and it is referred to extensively in GPICS. Level 3 indicates care for complex patients requiring support for multi-organ failure and with a minimum of 1:1 nurse:patient ratio, while Level 2 indicates care for patients with single organ support and a minimum 1:2 nurse:patient ratio. In contrast to the UK, Level I, II and III ICU definitions in Australia and NZ, refer not to patient dependency but instead to multiple organisational factors relating to work practice/caseload, staffing requirements, operational requirements, design, and monitoring and equipment standards [@noauthor_minimum_2011]. In Australia and NZ, Level III ICUs are tertiary referral units for intensive care patients, while Level I and II ICUs are rural units serving smaller populations where there are limited specialist services available, and where travel to specialist services may cause delay [@noauthor_minimum_2011] Therefore Level I-III ICUs in Australia and NZ are all able to provide a period of mechanical ventilation, and HDUs do not come under this classification system [@noauthor_guidelines_2013].
+
+### Other less clearly defined "high-acuity care" areas - Level 1.5 units?
+
+Beyond the definitions above, there are other patient care areas within the hospital, which do not traditionally fall under the widely accepted umbrella of ICU/HDU critical care units. These other areas have the ability to care for patients who require one or more interventions associated with critical care. For example, within the Emergency Department, resuscitation bays have the facilities to temporarily care for critically ill patients requiring intensive nursing/medical interventions. Another example would be the cardiologists' Coronary Care Unit, which may have the ability to deliver 1:1 or 1:2 nursing, invasive blood pressure monitoring, continuous ECG telemetry and inotropic/vasopressor support.
+
+This survey sought to identify high-acuity/enhanced care areas capable of delivering higher levels of postoperative care compared to usual ward level care. I posit that these high-acuity beds may have evolved in the UK, Australia and NZ to compensate for the low critical care capacity for high-risk patients. These areas may be thought of as "Level 1.5" units, to borrow from the traditional UK classification system described above. Many hospitals in this survey reported the use of such facilities to deliver postoperative critical care to patients.
+
+### The results in relation to existing literature
+
+Using administrative panel data from multiple different sources, Adhikari *et al* estimated the per capita ratio of critical care beds in a number of countries, and further estimated the number of ICU beds per 100 hospital beds [@adhikari_critical_2010]. They reported 1.2 ICU beds per 100 hospital beds for the UK, and 1.5 ICU beds per 100 hospital beds for NZ public hospitals, but did not provide estimates for Australia. They also further estimated per capita ICU bed ratios of 3.5, 5.6 and 4.7 per 100,000 population for UK, Australia and NZ respectively. In a separate study of European critical care capacity, Rhodes *et al* estimated 2.8 ICU beds per 100 hospital beds and 6.6 ICU/intermediate care beds per 100,000 population for the UK in 2012 [@rhodes_variability_2012].
+
+The ANZICS Centre for Outcome and Resource Evaluation reported 9.0 ICU beds per 100,000 population in Australia and 5.3 ICU beds per 100,000 population in NZ [@noauthor_anzics_2017]. These numbers are similar to the estimates I calculated for ventilated critical care beds per 100,000 population for each country.
+
+While the critical care capacity estimates from this study differ from these previous estimates, the survey findings seem to support the previous suggestions that Australia and NZ critical care bed ratios are generally higher than the UK. I propose that differences in our estimates may be due to: 1) variable definitions used for critical care; 2) differences in sampling methodology; 3) changes in total hospital bed numbers and critical care bed numbers in each country over time.
+
+In the survey, respondents were asked to provide the numbers of critical care beds in their hospitals, including both ICU and HDU beds in the query. Local collaborator-reported bed numbers were used for both the numerator and the denominator to arrive at the calculated ratios. In contrast, Adhikari *et al* obtained estimates based on literature review, synthesising data from a number of different sources. Their primary sources were a 2005 paper published by Wunsch *et al* obtained from administrative datasets for the UK [@wunsch_variation_2008], and a 2006/2007 report by the Australian and New Zealand Intensive Care Society (ANZICS) [@drennan_intensive_2008; @martin_unique_2010]. Rhodes *et al* estimated critical care bed numbers using aggregated country-level data dating from 2010, combining data from a number of different administrative sources&mdash;including the European Commission database (Eurostat), the World Health Organization (WHO), the Central Intelligence Agency (CIA) World Factbook and the OECD. The results from this survey therefore contribute a reliable, updated and empirical primary data source to the literature.
+
+Using intermediate definitions for surgery, approximately 8,000 surgical procedures were performed per 100,000 population per year in the UK NHS between 2009 and 2014, with an estimated `r formatC((1-0.528)*8073, big.mark = ",")` per 100,000 per year requiring overnight stay [@abbott_frequency_2017]. In comparison, `r formatC(1127574/24600000 * 100000, big.mark = ",")` an estimated surgical admissions per 100,000 population per year occur in Australian public hospitals [@australian_institute_of_health_and_welfare_admitted_2018], and 4,669 surgical procedures per 100,000 population per year are performed in New Zealand [@rose_estimated_2015; @weiser_estimate_2015]. Therefore, combining the results from this study with the other data obtained from the literature, the availability of critical care beds in relation to volume of surgical activity performed in public hospitals can be approximated for each country (UK = `r per_capita_ccu$ccuPerCapita[1]/((1-0.528)*8073)*1000`, Australia = `r per_capita_ccu$ccuPerCapita[2]/4584*1000`, New Zealand = `r per_capita_ccu$ccuPerCapita[3]/4669*1000` critical care beds per 1,000 surgical procedures). However, these estimates may be limited by differences in the definitions used when accounting for surgical volume between the different statistical sources.
+
+### Unanswered questions and future extensions
+
+What is clear from this analysis is the prevalence of high-acuity beds in many of hospitals throughout the three countries studied. I argue that these high-acuity beds are being used to augment the critical care capacity in hospitals where ICU/HDU beds may be insufficient to support clinical activity. However, it is not possible to comment on patient case-mix within these areas, or on the clinical effectiveness of treatment in these units. The high-acuity care areas likely represent a heterogenous group of bed types and further research is required to describe the detail of the structures and processes within these units, and the outcomes of patients admitted to them. We do not currently know if they provide good value care and whether they are a sufficient alternative to traditional ICU/HDU care for high risk patients. Rapid expansion in their numbers cannot currently be recommended without further evaluation.
+
+Other important factors which might influence the capacity to deliver postoperative care to high-risk patients may also need further exploration. Particularly, the effects of hospital networking arrangements across large geographical regions was not explored in our study. Inter-hospital transfer is an established mechanism for diverting patients when critical care capacity may be inadequate in the transferring hospital, or when centralised tertiary services only available in the receiving hospital are required [@whiteley_guidelines_2011]. There is evidence that patients transferred for non-clinical indications may have longer lengths of stay, but equivalent mortality outcomes, and therefore critical care capacities across regions may be important in resource planning beyond the immediate needs of a single hospital [@barratt_effect_2012].
+
+### Summary
+
+There are notable differences between the UK, Australia and NZ in postoperative provision of care, both in terms of critical care capacity, and also staffing levels in general surgical wards, which have been highlighted in the results of this first part of SNAP-2: EPICCS. There are no significant differences in critical care bed numbers as a proportion of total beds at each hospital between the three countries, after adjusting for hospital size and tertiary care provision. High-acuity/enhanced care areas which accommodate high-risk surgical patients for postoperative management have been identified and described. Per capita postoperative critical care availability was lowest in the UK after accounting for these high-acuity care beds. It is postulated that high-acuity care areas may have developed organically to facilitate the provision of some aspects of critical care &mdash; in particular more favourable nurse:patient ratios &mdash; outside the ICU and HDU, in order to meet service demand. However, the utility of these high-acuity beds requires further evaluation.
+
+##### PAGE BREAK

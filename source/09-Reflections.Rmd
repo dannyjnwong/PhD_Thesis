@@ -1,0 +1,40 @@
+---
+title: "Personal Reflections"
+author: "Danny Wong"
+date: "05/12/2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Personal Reflections
+
+In conducting this programme of research work, I have personally learned a great deal, and the experiences I have gained during this PhD will likely deeply influence my future academic and clinical work. Project managing a large multicentre study with multiple stakeholders has been both difficult and rewarding. Negotiating the ethics and fulfilling the necessary governance requirements of conducting research without patient consent has been challenging. 
+
+## Seeking help and sharing early
+
+The biggest lesson I have taken away from this process is that perfection is the enemy of good [^Voltaire]. Academics often delay the public unveiling of their work or sharing it with others for fear of criticism and ridicule, striving instead to improve upon it in isolation. They think they can avoid failure and mistakes by identifying flaws within their work before other people find them first. However, this obsessive way of working only allows them to see the flaws that are visible from their own perspectives, delays the dissemination of knowledge and confines horizons. Instead, turning early work out brings views from other angles which would not have been possible in solitude. During the PhD, there have been many documents and manuscripts which I have had to prepare in order to conduct my research, and I have always regretted not seeking help early and sharing early drafts, to iteratively improve upon my work.
+
+[^Voltaire]: This is an aphorism commonly attributed to Voltaire, who paraphrased an Italian proverb in his *Dictionnaire philosophique (Philosophical Dictionary)*, published in 1770. However, this concept has also been proposed by other philosophers, including Confucius and Aristotle [@ben-shahar_pursuit_2009].
+
+Collaboration with people of diverse skillsets has helped to fill gaps in my own skills, and managing a large group of researchers and clinicians during this PhD has broadened my access to people with wider knowledge than my own. There were many times when I needed to complete a task outside of my existing knowledge base, and seeking expertise from others was crucial in overcoming personal hurdles I faced. This is something that I will take with me back into clinical practice and continue doing in my research career. 
+
+## Understanding other's motivations and personal incentives
+
+During the course of conducting the research I realised that different stakeholders and individuals have slightly different needs and agendas, and the alignment of agendas is necessary to complete the project at hand. For the patient undergoing surgery, they might want to receive good clinical care to maximise their outcomes. For the clinicians delivering their care to the patient, they might want to perform their work with minimal interruption and go home on time, whilst focusing on the quality of care they deliver. For research and development staff at the hospital, they might want to ensure that the studies they are supporting are conducted efficiently with minimal deviation from protocol. For the funders of research, they might want to ensure that research outputs are published and disseminated widely and on time. 
+
+Spending some effort to understand the underlying motivations of each person taking part in the study, in whatever role they might have, is important. I have learned that seeking empathy with those around me helps to get the best from people.
+
+## Understanding myself
+
+Much of the work I have done during this PhD has relied on being organised and keeping track of different timelines. While being an anaesthetist was good training for this, the timelines in anaesthesia are shorter and the feedback from actions are generally more immediate: surgery never takes more than a few hours to finish, and most physiological changes react quickly to an intravenous drug bolus. In research, timelines can stretch out to weeks, months and years. I have learned that I do not like keeping multiple unfinished strands going simultaneously, and that I crave task completion in order to achieve a sense of closure.
+
+Furthermore, I have enjoyed the autonomy that I have had over my time during this period of research. The feeling of being able to plan the project and control what I do during the day will help guide my future decisions about which projects I take on, and which projects I might choose to pass up.
+
+Lastly, there have been periods in the PhD when I have been sitting in front of a computer or a stack of printed papers for a whole day without much human interaction. These have been the hardest parts of the research process, and I have come to realise that I enjoy social interaction and the happiest moments in research have been those where I have had the opportunity to share experiences with patients, colleagues and mentors. Finding a career role where I can participate in research discussions and facilitate other people's research ideas, as well as my own, is a direction I hope to take.
+
+##### PAGE BREAK

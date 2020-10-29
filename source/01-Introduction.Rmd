@@ -1,0 +1,494 @@
+---
+title: "Chapter 1: Introduction"
+subtitle: "Postoperative Critical Care and the Surgical Pathway"
+author: "Danny Wong"
+date: "01 January 2018"
+csl: ../references/bib/the-lancet.csl
+bibliography: ../references/bib/SNAP2.bib
+link-citations: yes
+description: "This is Chapter 1 of Danny's PhD Thesis"
+output: 
+  word_document:
+    reference_docx: styles_phd.docx
+---
+
+```{r intro_setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, dpi = 300, fig.width = 8, fig.height = 8)
+library(tidyverse)
+library(ggrepel)
+library(DiagrammeR)
+library(DiagrammeRsvg)
+library(rsvg)
+library(pander)
+library(knitr)
+```
+
+# Introduction &mdash; Surgery and its complications {#intro}
+
+Surgery has historically been a treatment of last resort and patients facing the knife in the era before reliable anaesthetics and antisepsis were exposed to high risks of death [@snow_blessed_2008]. What would be considered extremely low-risk and common procedures today were previously fraught with danger when surgical techniques and perioperative care were still in their infancy. 
+
+Until the 19th century, all surgery was performed without any anaesthesia, and the surgeon's objective was to perform their procedure as quickly as possible, whilst patients were tied up or inebriated with alcohol [@cohen_modulated_2010]. Hand hygiene was non-existent and deaths from postoperative infections were common [@nuland_doctors_2003]. Patients and surgeons would proceed with surgery only after all other treatment options were exhausted. And when surgery was reluctantly undertaken, historic accounts indicate that many patients would have had their wills written in advance and, in some cases, priests would be on hand to administer last rites in anticipation of death during the operation [@snow_blessed_2008].
+
+The feeling of dread when facing the prospect of surgery can be detected in the written accounts of people who underwent operations in earlier centuries. Recounting her experiences of being told that she would need to undergo a mastectomy, the novelist Frances "Fanny" Burney wrote in the 1800s:
+
+> *"all hope was over... I now saw it was inevitable, and abstained from any further effort... I was formally condemned to an operation."* &mdash; Frances Burney [@burney_selected_1987].
+
+Burney later described the surgery itself, which took place on 30 September 1811: 
+
+> *"I mounted, therefore, unbidden, the Bed stead... [and saw it] was instantly surrounded by the 7 men and my nurse... when the dreadful steel was plunged into the breast – cutting through veins – arteries – flesh – nerves – I needed no injunctions not to restrain my cries. I began a scream that lasted unintermittingly during the whole time of the incision – and I almost marvel that it rings not in my Ears still! So excruciating was the agony. When the wound was made, and the instrument was withdrawn, the pain seemed undiminished, for the air that suddenly rushed into those delicate parts felt like a mass of minute but sharp and forked poniards, that were tearing the edges of the wound... I then felt the knife (rack)ling against the breast bone – scraping it! When all was done, and they lifted me up that I might be put to bed... I then saw my good Dr Larry, pale nearly as myself, his face streaked with blood, and his expression depicting grief, apprehension, and almost horrour."* &mdash; Frances Burney [@burney_selected_1987].
+
+However, even after surviving the ordeal of surgery, many patients in pre-modern times still had to contend with the repercussions of their procedures, which continued to plague them with long-term symptoms. As an example, the celebrated diarist Samuel Pepys underwent surgery to remove bladder stones which troubled him since his youth on 26 March 1658; but after his lithotomy[^Lithotomy] he continued to complain of chronic complications for the remainder of his life. There were up to 48 entries found within his diary which reference the bladder stone or his surgery, which provide evidence of the profound and lasting impact of the illness and treatment he received [@phil_gyford_bladder_nodate]. His descriptions of the chronic complications he endured after the lithotomy were captured in numerous diary entries referring to the surgery [^SamuelPepys], signalling clearly that the operation was one of his life-defining events.
+
+[^Lithotomy]: Urinary tract stone removal (from the Greek _litho-_, meaning _relating to a stone_; and _-tomy_, meaning _cutting_). In medieval period, lithomies would have involved an incision in the perineum, approaching the bladder inferolaterally. The recovery time with this procedure was one to three months, and some patients were left with permanent fistulae. Unsurprisingly, mortality rates were high in this era before asepsis and anaesthesia, estimated at between 10% and 30% [@herr_cutting_2008].
+
+[^SamuelPepys]: In an entry from 26 March 1664, Pepys wrote, _"This being my solemn feast for my cutting of the stone, it being now, blessed be God! this day six years since the time; and I bless God I do in all respects find myself free from that disease or any signs of it, more than that upon the least cold I continue to have pain in making water, by gathering of wind and growing costive, till which be removed I am at no ease, but without that I am very well. One evil more I have, which is that upon the least squeeze almost my cods begin to swell and come to great pain, which is very strange and troublesome to me, though upon the speedy applying of a poultice it goes down again, and in two days I am well again."_[@phil_gyford_bladder_nodate]
+
+Fast forward to the 21st Century, bladder stone surgery today has transformed into significantly less-invasive laparoscopic and cystoscopic removal techniques, associated with far less risk to the patient [@zumstein_surgical_2018]; and as with the particular progress achieved in urinary stone removal surgery over time, much general development has also taken place elsewhere in other surgical specialties and perioperative care since the 17th Century. Surgery is now a much more common and vital treatment option for a whole spectrum of acute and chronic medical conditions, and will likely become increasingly prevalent as populations grow and age [@rose_estimated_2015; @the_royal_college_of_anaesthetists_perioperative_2015; @abbott_frequency_2017; @fowler_age_2019]. 
+
+Estimates of UK surgical activity vary, with one recent study calculating between approximately 2,400 and 12,500 cases per year per 100,000 population [@abbott_frequency_2017]. In a separate estimate, the Royal College of Anaesthetists reports that around 10 million patients undergo surgical procedures a year worldwide, based on a data published by Weiser *et al* [@weiser_estimation_2008; @the_royal_college_of_anaesthetists_perioperative_2015]. Therefore, identification of patients at high risk of complications arising from surgery and its sequelae, and attempting to mitigate their risks through clinical and systems interventions, has been a focus of research in perioperative medicine [^PeriopMed] (that is, the medical subspecialty concerned with the medical care of the patient before, during, and after surgery) [@pearse_identification_2006; @pearse_mortality_2012; @the_international_surgical_outcomes_study_group_global_2016]. 
+
+[^PeriopMed]: Perioperative medicine is a newly evolving medical specialty concerned with the delivery of healthcare for patients undergoing surgery in the secondary care setting and closely involving anaesthetic services. It refers to the integration of multidisciplinary care by surgeons, physicians, anaesthetists and allied healthcare professionals from time that surgery is contemplated, until the patient has undergone full recovery following their operation.
+
+The perioperative period is considered a dangerous time for a patient due to the iatrogenic physiological and anatomical trauma experienced by the patient. During surgery, patients are exposed to intraoperative physical trauma exerted by the surgeon's scalpel, which may result in blood loss, altered vascular resistance and blood flow to vital organs, increased cardiac oxygen demands. Further downstream postoperatively, the patient undergoes a stress response to the surgical insult which manifests as systemic derangement and a range of metabolic effects resulting from tissue injury [@desborough_stress_2000; @burton_endocrine_2004; @finnerty_surgically_2013]. Activation of the hypothalamic-pituitary-adrenal axis and the sympathetic nervous system following a surgical stimulus results in an upregulation of glucocorticoid, mineralocorticoid, catecholamine, growth hormone, vasopressin, glucagon and renin secretion, and a concurrent downregulation of insulin, sex hormone and thyroid hormone secretion [@burton_endocrine_2004; @finnerty_surgically_2013]. Inflammatory cytokines cascades that are important in mediating immunity also become activated following tissue damage, leading to an acute phase response. These responses are characterised by changes including increased vascular permeability, changes in patterns of hepatic protein synthesis, and neutrophil and lymphocyte proliferation. The overall result of these changes is a dysregulated physiology and altered homeostasis in patients around the time of surgery, which increases their susceptibility to adverse events.
+
+In addition to the surgical insults resulting from tissue trauma, the anaesthesia that patients are subject to in order to facilitate surgery also carries its own risks and physiological changes. Many drugs used to induce general anaesthesia can cause vasodilatation and myocardial depression, resulting in hypotension and impaired coronary and cerebral perfusion and therefore impaired oxygen delivery to vital tissues [@peck_pharmacology_2008]. At the onset of general anaesthesia, patients quickly lose their respiratory drive, endogenous airway reflexes are ablated, and diaphragmatic activity ceases. These changes in respiratory function result in the lung bases collapsing (pulmonary atelectasis), a loss of pulmonary ventilation and changes in ventilation-perfusion matching within the lung [@smith_induction_2009]. Therefore, at anaesthetic induction, the anaesthetist has to attend to the physiological changes to airway, breathing and circulation in order to prevent the harmful consequences of anaesthesia from affecting the patient. Interventions to the patient's airway, in particular, are associated with a range of potential complications, such as the inability to intubate the trachea, which may result in an inability to provide adequate oxygenation to the patient with disastrous consequences. In the postoperative period, inhibited cough reflexes from surgical wound pain inhibit adequate re-expansion of atelectatic lungs and clearance of pulmonary secretions, which increase the likelihood of lower respiratory tract infections developing.
+
+Taken together, one can consider the perioperative risks faced by the patient around the time of surgery as the sum of complications from direct surgical insult and from anaesthesia, on the background of the risks posed from the patient's general state of health. At a cohort level, perioperative risks are frequently measured in terms of mortality or morbidity (complication) rates within a defined period after surgery. Mortality within 30 days of surgery in higher risk patient groups have been estimated at around 8% for hip fracture surgery patients [@marufu_prediction_2016], but can exceed 10% in patients undergoing emergency laparotomy [@nela_project_team_third_2017], and can even be as high as 40% in some forms of emergency aortic surgery [@pearse_identification_2006]. Anaesthesia techniques have been developed to mitigate against mortality risks, and one of the priorities of safe perioperative care is to minimise potentially avoidable patient risks during the operation (the intraoperative period), in order to prevent direct anaesthetic-related complications[^AnaesComplications]. Consequently, complications directly attributable to anaesthesia are on the decline, with estimates of anaesthesia-related mortality risk decreasing from approximately 1 death in 1,000 in the 1940s, to 1 in 10,000 in the 1970s, and improving to around 1 per million in the mid-2000s [@arbous_mortality_2001; @li_epidemiology_2009]. However, the postoperative care received by patients during the surgical period is also thought to affect longer-term patient outcomes, through the early identification of complications and initiation of specific treatments directed at those complications as they arise [@khuri_determinants_2005]. Thus, a number of processes exist to expedite patient recovery and reduce postoperative complications. These are commonly referred to as “pathways”, to describe the journey taken by patients from the moment of surgery contemplation, through to undergoing their surgery, and then the postoperative care they receive after surgery [@miller_successful_2014; @paton_effectiveness_2014; @ljungqvist_enhanced_2017]. An example of an idealised pathway is described in more detail below.
+
+[^AnaesComplications]: Examples of complications directly attributable to anaesthesia include: 1) airway-related complications (estimated at 46 complications per million general anaesthetics, including death or brain damage due to inadequate oxygenation at a rate of 6.6 per million general anaesthetics) [@cook_major_2011]; 2) complications from spinal or epidural anaesthesia (estimated incidences of paraplegia or death 0.7&ndash;1.8 per 100,000 central neuraxial blocks) [@cook_major_2009]; 3) other complications such as myocardial ischaemia events (500 per 10,000), pulmonary aspiration and respiratory infections (3 per 10,000), anaphylaxis to drugs (1 per 10,000), damage to teeth (2 per 10,000), postoperative nausea and vomiting (2,500 per 10,000), postoperative delirium (1,400 per 10,000) and so on [@jenkins_consent_2003]. This list is of course not exhaustive. To contrast these values with everyday risks: the annual risk of death from smoking 10 cigarettes per day is estimated at 1 in 200 and the annual risk of death from a road traffic accident is approximately 1 in 8,000 [@adams_risk_2001].
+
+## The modern surgical pathway
+
+Guidelines issued by the Royal College of Anaesthetists, recommend minimum standards which hospitals should achieve in the delivery of surgical and perioperative care to patients [@the_royal_college_of_anaesthetists_guidelines_2017]. Although there are variations to individual patient experiences, depending on local hospital infrastructure or surgical procedure, it is helpful to imagine a hypothetical journey most patients can expect to experience in the modern surgical pathway (Figure 1-1)[^animation]. 
+
+Typically, once a patient has reached a decision to undergo surgery in partnership with their multidisciplinary team, preoperative preparations are made to facilitate this process [@the_royal_college_of_anaesthetists_perioperative_2015; @bougeard_survey_2017]. If the urgency of surgery permits, and if facilities are available locally, patients undergo preoperative clinical assessment which focuses on modifying existing risk factors where possible, to improve perioperative outcomes. They could be seen in a preoperative assessment clinic where they may undergo investigations to ascertain their fitness or identify physiological parameters which need correcting. Alterations to the patient's existing medications or lifestyle modifications may be suggested, such as weight-loss or smoking cessation. Alternatively, in emergency surgery, preassessment may be performed by the anaesthetist in the hours immediately preceding surgery, and may focus on correcting deranged physiological values, considering modifications to perioperative management (including changes to anaesthetic and surgical techniques and decisions about postoperative recovery destinations), and counselling patients on risks and benefits.
+
+A patient would then go on to have their surgery, and surgical and anaesthetic techniques would be individually tailored according to their needs. After surgery, he or she would undergo postoperative recovery either at home or in hospital: in the majority of surgical cases (an estimated 63%) [@abbott_frequency_2017], low-risk patients undergoing uncomplicated day-case procedures are discharged from hospital on the same day as their surgery; the remaining 37% of cases are inpatient surgery, where patients stay in hospital for at least one night after their procedure. 
+
+[^animation]: This pathway has been clearly illustrated in an animated short film commissioned by the Royal College of Anaesthetists as an information resource for patients and healthcare providers. It follows the journey of a hypothetical patient, Doug, who undergoes surgery to remove a bowel tumour and experiences some complications after his operation. The film can be seen here: https://youtu.be/BA6ZUsf5jdo.
+
+```{r intro_Fig1-1_prep, echo=FALSE, message=FALSE, warning=FALSE}
+Pathway_diagram <- grViz("
+digraph dot {
+      
+      graph [layout = dot]
+      
+      node [shape = rectangle,
+      style = filled,
+      color = white,
+      width = 3,
+      fontsize = 14,
+      fontname = 'Arial']
+      
+      node [fillcolor = grey]
+      Home [label = 'Patient at home']
+      Symptoms [label = 'Patient presents with\nsymptoms/signs']
+      Diagnosis [label = 'Diagnosis is made']
+      Medical [label = 'Medical (Conservative)\nManagement']
+
+      node [fillcolor = skyblue]
+      Surgical [label = 'Surgical Management']
+      PreOp [label = 'Preoperative planning\n- Address modifiable risks\n- Further investigations']
+      IntraOp [label = 'Intraoperative management\n(Undergoes surgery)']
+      PostOp [label = 'Postoperative recovery']
+
+      node [fillcolor = pink]
+      ICU [label = 'Critical Care']
+      Ward [label = 'Surgical Ward']
+      Shortstay [label = 'Short Stay Recovery Area']
+      
+      edge [color = grey]
+      Home -> Symptoms
+      Symptoms -> Diagnosis
+      Diagnosis -> Medical
+      
+      edge [color = grey, constraint = false]      
+      Diagnosis -> Surgical
+      
+      edge [color = grey, constraint = true]
+      Surgical -> PreOp
+      PreOp -> IntraOp
+      IntraOp -> PostOp
+      
+      edge [color = grey, constraint = false]
+      PostOp -> {ICU Ward Shortstay}      
+      ICU -> Ward
+      Ward -> ICU
+
+      edge [color = grey, constraint = false]
+      Ward -> Home
+      
+      edge [xlabel = 'Discharge',
+            fontsize = 14,
+            fontname = 'Arial']
+      Shortstay -> Home
+
+      }")
+
+Pathway_diagram %>% export_svg() %>% charToRaw() %>%
+  rsvg_png("figures/intro_Fig1-1_Pathway.png", height = 850)
+
+Pathway_diagram %>% export_svg() %>% charToRaw() %>% 
+  rsvg_pdf(file = "figures/intro_Fig1-1_Pathway.pdf")
+```
+```{r intro_Fig1-1, echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, dpi=600, fig.cap="Figure 1-1: An idealised patient surgical pathway."}
+include_graphics(path = "figures/intro_Fig1-1_Pathway.png", dpi = 600)
+```
+
+## Postoperative critical care
+
+Inpatient surgical recovery generally occurs on a general surgical ward, which is staffed by nurses and healthcare assistants who are accustomed to caring for patients after their surgery. On this ward, the medical management is typically coordinated by operating surgeons and their team of junior doctors. As patients may have different baseline co-morbidities and are subjected to surgical insults of varying magnitude depending on their underlying diagnosis and comorbidities, clinical teams may admit those deemed to be at increased risk of developing complications to a critical care unit after surgery&mdash;where it is thought that patients may have their perioperative risk reduced through higher levels of monitoring, more intensive nursing care, and more advanced medical therapies not typically available on the surgical ward. 
+
+In some countries, such as Australia and New Zealand (NZ), there are currently no national guidelines for deciding which patients are appropriate for admission postoperatively to critical care. However, in the UK, the National Confidential Enquiry into Patient Outcome and Death (NCEPOD), the Royal College of Surgeons of England and the Department of Health collectively recommend critical care admission when the preoperative estimated risk of mortality is &ge;5% [@findlay_knowing_2011; @anderson_higher_2011; @lees_high-risk_2018].
+
+### Definitions of critical care
+
+Formal definitions of critical care in the UK are defined in guideline documents published by the Intensive Care Society (ICS) and the Faculty of Intensive Care Medicine (FICM), and in the Critical Care Minimum Dataset maintained by NHS Digital (Table 1-1) [@nhs_digital_nhs_2005; @intensive_care_society_levels_2009; @masterson_guidelines_2015]. Levels 0 and 1 generally describe care provided on normal wards, while Levels 2 and 3 describe critical care delivered within high-dependency unit (HDU) and intensive care unit (ICU) respectively. 
+
+| Levels (UK) | Description   | 
+| :---------: |:--------------|
+| 0           | Patients whose needs can be met through normal ward care in an acute hospital. |
+| 1           | Patients at risk of their condition deteriorating, or those recently relocated from higher levels of care, whose needs can be met on an acute ward with additional advice and support from the Critical Care team. |
+| 2           | Patients requiring more detailed observation or intervention including support for a single failing organ system or post-operative care and those ‘stepping down’ from higher levels of care. |
+| 3           | Patients requiring advanced respiratory support alone, or basic respiratory support together with support of at least two organ systems. This level includes all complex patients requiring support for multi-organ failure. |
+
+Table: Table 1-1: The Level 0-3 classification system used in the UK describes the patients' needs first, then matches the levels of intervention/observation required in order to adequately care for the patient. Adapted from the Guidelines for the Provision of Intensive Care Services (GPICS) document [@masterson_guidelines_2015].
+
+However, alternative definitions exist in health systems of other countries and regions, which may impede international comparisons [@wunsch_variation_2008; @rhodes_icu_2011; @rhodes_variability_2012]. 
+
+For example, in contrast to the UK, Level I, II and III ICU definitions in Australia and NZ, refer not to patient dependency but instead to multiple organisational factors relating to work practice/caseload, staffing requirements, operational requirements, design, and monitoring and equipment standards (Table 1-2) [@noauthor_minimum_2011]. The major difference between the UK and the Australasian system is that the former defined standards based on the needs of the patient, while the latter defines the unit capabilities: in Australia and NZ, Level III ICUs are tertiary referral units for intensive care patients, while Level I and II ICUs are rural units serving smaller populations where there are limited specialist services available, and where travel to specialist services may cause delay [@noauthor_minimum_2011]; Level I-III ICUs in Australia and NZ are all able to provide a period of mechanical ventilation, and HDUs do not come under this classification system [@noauthor_guidelines_2013]. 
+
+| Levels (Australasia) | Description   | 
+| :------------------: |:--------------|
+| I                    | A unit capable of providing immediate resuscitation and short-term cardio-respiratory support for critically ill patients, and able to provide mechanical ventilation and simple invasive cardiovascular monitoring for a period of at least several hours. No minimum number of beds, but capacity based on demand. |
+| II                   | A unit capable of providing mechanical ventilation, renal replacement therapy and invasive cardiovascular monitoring for an indefinite period. At least 6 staffed and equipped beds with more than 200 mechanically ventilated patients admitted per annum. |
+| III                  | A tertiary referral unit for intensive care patients capable of providing comprehensive critical care including complex multi-system life support for an indefinite period. Level III units should have a demonstrated commitment to academic education and research. All patients admitted to the unit must be referred for management to the attending intensive care specialist. At least 8 staffed and equipped beds to discharge commitments consistent with a tertiary referral centre, divided into smaller areas of 8-15 beds. Normally more than 400 mechanically ventilated patients admitted per annum. Medical director with full-time commitment to ICU and who is a Fellow of the College of Intensive Care Medicine. Minimum standards for support staff, such as clerical and secretarial staff and equipment officers and other allied health professionals. |
+
+Table: Table 1-2: The Level I-III Australia and New Zealand Intensive Care Society (ANZICS) classification system in Australia and New Zealand only refers to Intensive Care Units, and does not include HDUs which are separately defined [@noauthor_minimum_2011; @noauthor_guidelines_2013].
+
+European guidelines from the European Society of Intensive Care Medicine (ESICM) similarly describe three levels of care (Levels I, II and III), which again mirror the language of the UK and Australasian definitions but differ in their definitions (Table 1-3) [@valentin_recommendations_2011]. Within the European definitions, HDUs are classified as providing levels of care below Level I.
+
+| Levels (European) | Description   | 
+| :---------------: |:--------------|
+| I                 | Patients experiencing signs of organ dysfunction necessitating continuous monitoring and minor pharmacological or device-related support. These patients are at risk of developing one or more acute organ failures. Minimum 1 nurse to 3 patients.|
+| II                | Patients requiring monitoring and pharmacological and/or device-related support (e.g., hemodynamic support, respiratory assistance, renal replacement therapy) of only one acutely failing vital organ system with a life-threatening character. Minimum 1 nurse to 2 patients.|
+| III               | Patients with multiple (two or more) acute vital organ failure of an immediate life-threatening character. These patients depend on pharmacological as well as device-related organ support such as hemodynamic support, respiratory assistance, or renal replacement therapy.|
+
+Table: Table 1-3: The Levels of Care defined by the ESICM. HDUs are defined as providing a level of care not exceeding Level I [@valentin_recommendations_2011].
+
+Given the international variation that exists in definitions of critical care, for the purposes of this PhD thesis, I shall define _postoperative critical care_ as the package of treatments available on both the ICU (Level 3) and HDU (Level 2) _according to UK conventions_ for patients admitted to those units for care after undergoing surgery.
+
+### Critical care as a complex intervention
+
+To understand the differences between critical care and general surgical ward care in the postoperative recovery pathway, critical care can be viewed through two perspectives.
+
+In the first, critical care can be thought of as a type of Complex Intervention. This class of interventions are described as treatments *"that contain several interacting components"* [@craig_developing_2008]. Other features of Complex Interventions highlighted by Craig *et al* include complexity of behaviours required by those delivering or receiving the intervention, complexity of groups or organisational levels targeted by the intervention, number and variability of outcomes, and a degree of flexibility or tailoring of the intervention to the patient [@craig_developing_2008]. 
+
+Critical care fulfils the features of a Complex Intervention as it sits within a patient pathway with a number of components of care, and includes multiple different processes which can be flexibly tailored to individual patient need. The decision to deliver critical care is also contingent on a number of different factors, including the patient's risk factors for developing complications, the clinician's judgement of whether they think critical care would benefit the patient, and other contextual factors such as availability of beds and other competing interests (from other high-risk surgical patients or critically-ill non-surgical patients) for limited bed resources. 
+
+To see how the critical care Complex Intervention fits within the patient pathway, a graphical model (Figure 1-2) can be used [^GraphicalModels].
+
+[^GraphicalModels]: Graphical models were pioneered by Judea Pearl, Professor of Computer Science at the University of California in Los Angeles [@pearl_causality_2000; @pearl_causal_2016]. Using a graphical model, variables (nodes/vertices) are linked by arrows (edges), indicating a possible causal effect between linked variables, in the direction of the arrow. Relationships between variables can therefore be visually inspected and paths between variables would indicate the presence or absence of a causal relationship. When a variable is omitted in a graphical model, or where a link is not drawn between variables, an explicit assumption is stated about the system. 
+
+In Figure 1-2 a number of the factors (nodes) which could possibly affect the surgical outcomes of interest (i.e. postoperative complications and mortality, orange boxes) are depicted in relation to each other. Their relationships are linked by arrows which suggest the direction of effect of any node on another. In this model, critical care (pink box) could indicate whether a patient receives critical care (vs. normal surgical ward care), and therefore could be thought of as a differing treatment option that may influence the effects of various other upstream causal variables (blue boxes), including the magnitude of surgical insult and other measured or unmeasured confounders.
+
+```{r intro_Fig1-2_prep, echo=FALSE, message=FALSE, warning=FALSE}
+DAG_diagram <- grViz("
+digraph dot {
+      
+      graph [layout = dot, rankdir = LR]
+      
+      node [shape = rectangle,
+      style = filled,
+      color = white,
+      fontsize = 14,
+      fontname = 'Arial']
+      
+      node [fillcolor = skyblue]
+      Surgery [label = 'Magnitude of\nsurgical insult']
+      Measured_Confounders [label = 'Measured confounders\ne.g. age, comorbidities']
+      
+      node [fillcolor = pink]
+      CritCare [label = 'Critical care']
+      
+      node [fillcolor = orange]
+      Complications [label = 'Postoperative complications']
+      Mortality [label = 'Mortality']
+      
+      node [shape = oval, fillcolor = skyblue]
+      Unmeasured_Confounders [label = 'Unmeasured confounders\ne.g. genotype']
+      
+      edge [color = grey, constraint = true]
+      Surgery -> {Complications Mortality CritCare}
+      CritCare -> {Complications Mortality}
+      Measured_Confounders -> {CritCare Surgery Complications Mortality}
+      Unmeasured_Confounders -> CritCare
+      
+      edge [constraint = false]
+      Complications -> Mortality
+      Unmeasured_Confounders -> {Complications Mortality Measured_Confounders}
+      
+      }")
+
+DAG_diagram %>% export_svg() %>% charToRaw() %>%
+  rsvg_png("figures/intro_Fig1-2_DAG.png", height = 850)
+
+DAG_diagram %>% export_svg() %>% charToRaw() %>% rsvg_pdf(file = "figures/intro_Fig1-2_DAG_diagram.pdf")
+```
+
+```{r intro_Fig1-2, echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, dpi=600, fig.cap="Figure 1-2: A simplified graphical model for the factors which may affect surgical outcomes. Potential confounders are blue, outcomes are orange, and the critical care intervention is pink."}
+include_graphics(path = "figures/intro_Fig1-2_DAG.png", dpi = 600)
+```
+
+### A Donabedian framework: critical care as healthcare structure and process
+
+Second, the Donabedian *Structure-Process-Outcomes* framework[^SPO] could also be used to describe the differences between a critical care unit and a general surgical ward [@donabedian_evaluating_1966; @ayanian_donabedians_2016]. Using this model, one might say that critical care units are specialised areas with higher nurse-to-patient/doctor-to-patient ratios and specialised equipment (*Structure*), that are able to deliver intensive or advanced medical therapies such as increased monitoring, mechanical ventilation or advanced drug infusions (*Process*), in order to improve patient recovery (reduce complications and mortality) following surgery (*Outcomes*). Table 1-4 summarises some key aspects of critical care delivery which differ from normal surgical ward care, using the UK consensus definitions [@masterson_guidelines_2015].
+
+[^SPO]: Avedis Donabedian, a Professor of Public Health at the University of Michigan, proposed a system for evaluating healthcare quality using a *Structure-Process-Outcome* model, where *Structure*&mdash;the settings and organisations where healthcare takes place&mdash;and *Process*&mdash;the activities of healthcare delivery&mdash;can affect patient *Outcome*&mdash;the end result healthcare received. This model was first published in a conference paper he wrote in 1966 [@donabedian_evaluating_1966]. Donabedian's conceptual framework is now regarded as a cornerstone in the evaluation of healthcare systems and structures, and has been influential in the assessment of small clinics, hospitals and nursing homes at a micro-level, and entire public health systems and networks at a macro-level [@ayanian_donabedians_2016].
+
+```{r intro_Table1-4, echo=FALSE, message=FALSE, warning=FALSE}
+panderOptions("table.split.table", Inf)
+df_table_1.1 <- data.frame(Structure = 
+                             c("1. Specialised equipment for delivering organ support",
+                               "2. Consultant:patient ratio ranging from 1:8 to 1:15",
+                               "3. Recommended resident doctor:patient ratio no worse than 1:8",
+                               "4. Minimum 1:1 nurse:patient ratio for Level 3 patients",
+                               "5. Minimum 1:2 nurse:patient ratio for Level 2 patients",
+                               "6. Minimum training standards, e.g. 50% of nurses must have a post-registration award in critical care nursing"),
+                           Process =
+                             c("1. Consultant intensivist available 24/7, and able to attend within 30 minutes",
+                               "2. Daily (twice daily recommended) consultant ward rounds",
+                               "3. Daily multidisciplinary input from nursing, microbiology, pharmacy and physiotherapy",
+                               "4. Able to monitor vital signs hourly",
+                               "5. Able to provide organ support, e.g. invasive or non-invasive ventilation, multiple intravenous vasoactive infusions, renal replacement therapy, etc.",
+                               "6. Able to care for patients under continuous sedation"),
+                           Outcomes = 
+                             c("1. ICU complications, e.g. ventilator associated pneumonia",
+                               "2. More severe morbidity, e.g. multi-organ dysfunction",
+                               "3. Higher incidence of mortality than general ward",
+                               "4. Greater loss of function at discharge than general ward patients",
+                               "",
+                               ""))
+
+pander(df_table_1.1, justify = "left",
+       caption = "Table 1-4: Some features of critical care as described using a Donabedian Structure-Process-Outcome framework.")
+```
+
+### The common language of critical care
+
+Therefore, critical care, seen through the lenses of a complex intervention and the Donabedian conceptual framework, differs fundamentally from general ward care by the types of medical treatments and equipment, the increased intensity of nursing and medical (doctor) input, and levels of monitoring available to the patients postoperatively. While there are differences between countries in formal definitions for critical care, these aspects are consistent when critical care is compared across different countries [@wunsch_variation_2008]. 
+
+### Equipoise over the benefits of critical care
+
+Although critical care admission is generally regarded as essential for high-risk patients, it is not yet certain whether this complex intervention improves outcomes, or which patients would benefit from pre-emptive admission to critical care after surgery. There is an assumption that critical care is beneficial, and while trials on some specific critical care interventions, such as pre-emptive haemodynamic therapies have been shown to be beneficial [@pearse_early_2005; @hamilton_systematic_2011], the efficacy of planned critical care admission overall to prevent postoperative complications has not itself been subject to randomised controlled trials.
+
+While there is some evidence from observational studies favouring critical care admission in patients experiencing clinical deterioration on the ward, when prompt admission may result in improved mortality outcomes compared to delayed admission [@harris_impact_2018], the evidence for immediate postoperative admission is less clear (Table 1-5) [@symons_mortality_2013; @vester-andersen_mortality_2014; @gillies_regional_2015; @kahan_critical_2017; @mclean_critical_2019; @thevathasan_impact_2019].
+
+An Instrumental Variable (IV) analysis conducted by Harris *et al* using multicentre data from the UK from 12,380 patients assessed the effects of prompt admission to critical care under the natural randomisation event (instrument) of critical care strain [@harris_impact_2018]. They demonstrated that when critical care strain was low (2 or more empty critical care beds) patients were more likely to be admitted promptly to critical care from the ward than when strain was high (no empty beds available at the time of referral), and consequently the delays in admission seen during periods of high strain significantly increased 90-day mortality by 16.2% for those recommended for critical care admission.
+
+| Study                                        | Sample Size (n) | Centres | Country     |Details |
+|:---------------------------------------------|----------------:|--------:|------------:|--------|
+|Symons *et al* 2013 [@symons_mortality_2013]  |          367,796|      145|  England, UK|Retrospective study. Data from patients admitted with high-risk emergency general surgery diagnoses were extracted from the Hospital Episode Statistics (HES) database. The effects of hospital-level structural factors on mortality were investigated using logistic regression modelling. Patients admitted to hospitals in the highest tertile of ICU bed numbers per 1000 hospital beds had lower mortality (adjusted OR = 0.84) than those in the lowest and middle tertiles.|
+|Vester-Andersen *et al* 2014 [@vester-andersen_mortality_2014]| 2,904|   6|      Denmark|Prospective study. Major gastrointestinal surgery (laparotomy or laparoscopy) patients included in a multivariable logistic regression analysis comparing admission to ward care with immediate postoperative critical care admission, and with ward care followed by delayed admission to critical care. Overall 538 patients died (18.5%) within 30 days of surgery, with higher risk-adjusted mortality for patients admitted to critical care immediately after surgery (adjusted OR = 3.27). Delayed admission to critical care had a higher risk-adjusted mortality than immediate postoperative admission (adjusted OR = 5.45).|
+|Gillies *et al* 2015 @gillies_regional_2015   |           16,147|      207|           UK|Retrospective study. Data from patients admitted to UK critical care units after surgery was extracted and linked from the HES and Office for National Statistics, Intensive Care National Audit & Research Centre Case Mix Programme and Scottish Intensive Care Society Audit Group (SICSAG) databases. Multilevel logistic regression modelling was used to analyse the effects of regional-level factors on regional variations in mortality, adjusting for patient-level risk factors. Inter-region unadjusted variance in hospital mortality was identified (Median Odds Ratio [MOR] = 1.14), and persisted despite patient-level case mix adjustment (MOR 1.10). After critical care bed utilisation was included in model adjustment, MOR reduced to 1.03, and suggested that patients admitted to critical care units in hospitals with higher surgical critical care admissions per 100,000 were associated with lower mortality (adjusted OR 0.91).|
+|Kahan *et al* 2017 [@kahan_critical_2017]     |           44,814|      474| 27 countries|Prospective study. Patients undergoing elective surgery with planned overnight hospital stay, excluding emergency, day-case surgery and radiological procedures. Multilevel logistic regression modelling adjusting for patient-level risk-factors, hospital-level and country-level effects was used to investigate the effects of critical care admission on 30-day inpatient mortality. Patients admitted to critical care immediately postoperatively had a higher risk-adjusted mortality (adjusted OR = 3.01). This association differed between countries with different income-levels (high-income countries adjusted OR = 2.50 vs. low- and middle-income adjusted OR = 4.68). Further sensitivity analysis including only high-risk patients did not significantly alter findings.|
+|STARSurg collaborative 2019 [@mclean_critical_2019] |      4,529|      163| UK & Ireland|Prospective study. Major gastrointestinal and liver surgery patients were included. Multilevel logistic regression modelling was used to investigate the effects of direct postoperative critical care admission on mortality. Patients admitted to critical care directly after surgery had higher 30-day mortality after risk-adjustment (adjusted OR = 2.32) compared to patients admitted to ward care. Patients admitted initially to the ward, later requiring rescue critical care admission had higher risk-adjusted mortality than those admitted to critical care immediately post-surgery (adjusted OR = 8.65).|
+|Thevathasan *et al* 2019 [@thevathasan_impact_2019] |      7,060|        1|          USA|Retrospective study. Data from patients undergoing surgery requiring general anaesthesia were extracted from hospital electronic records and analysed using propensity score matching methods. Patients with the lowest tertile of propensity for postoperative critical care admission were found to have increased postoperative lengths of stay (adjusted Incidence Rate Ratio [IRR] = 1.69) and hospital costs (adjusted IRR = 1.92). Postoperative critical care admission was associated with decreased lengths of stay (adjusted IRR = 0.90) and hospital costs (adjusted IRR 0.92).|
+
+Table: Table 1-5: A few examples of observational studies examining the effects of postoperative critical care admission on surgical outcome.
+
+In the post-surgical population, an association between rates of critical care utilisation and improved regional variation mortality outcomes has previously been shown in a retrospective study by Gillies and colleagues, who extracted data from large UK registries and used multilevel regression analysis to determine if there were regional differences in outcome for surgical patients admitted to critical care [@gillies_regional_2015]. Their study of 16,147 patients admitted to 207 critical care units detected regional-level variation in hospital mortality which was explained by critical care bed utilisation within the hospitals (Median Odds Ratio reducing from 1.14 in a null model to 1.03 in a model accounting for surgical critical care admissions per 100,000 procedures), and that higher critical care utilisation was associated with a significant reduction in patient mortality.
+
+Applying increased monitoring and higher-intensity nursing care to patients immediately following their surgery is intuitively more favourable compared to less intensive ward level care, and may prevent complications that necessitate rescue admission to critical care at a later stage of the hospital stay. Admission to critical care when patients have already experienced complications is associated with higher mortality when compared with patients who were immediately admitted postoperatively [@gillies_intensive_2017]. Yet other observational studies have suggested that patients who are admitted for critical care management do not necessarily receive a survival benefit [@kahan_critical_2017]. 
+
+Kahan *et al* reported a planned analysis of ISOS data which analysed outcomes from 44,814 patients undergoing surgery in 474 hospitals in 27 countries using mix-effects logistic regression models to evaluate the association between immediate postoperative critical care admission and in-hospital mortality [@kahan_critical_2017]. After adjusting for patient-risk, they found that the mortality was higher in patients admitted to critical care (adjusted OR = 3.01). 
+
+A prospective observational study by the Student Audit and Research in Surgery (STARSurg) collaborative including 4,529 patients undergoing major gastrointestinal and liver surgery in 163 centres in the UK and Ireland found that patients admitted to critical care directly after surgery had higher 30-day mortality after risk-adjustment (adjusted OR = 2.32) compared to patients admitted to ward care using multilevel logistic regression modelling [@mclean_critical_2019]. But patients in their cohort who subsequently deteriorated on the ward and later required rescue critical care admission had still higher risk-adjusted mortality (adjusted OR = 8.65).
+
+A recent study by Thevathasan *et al* using data from a single tertiary centre in the USA suggests that there might be a heterogenous treatment effect associated with immediate postoperative critical care admission [@thevathasan_impact_2019]. They performed a propensity score-matched study in patients who underwent surgery with general anaesthesia, matching 3,530 patients who were admitted to critical care postoperatively to 3,530 patients who were admitted postoperatively to a surgical ward on a propensity score for postoperative critical care unit admission. They further stratified their cohort into tertiles of propensity score, and found differences in the effect of critical care admission on hospital lengths of stay, and healthcare costs which varied by tertile of propensity score. In patients with the lowest propensity for critical care admission, admission to critical care was associated with increased length of stay and healthcare costs. Conversely, in patients with the highest propensity for critical care, admission to critical care was associated with shorter lengths of stay and healthcare costs.
+
+Given the lack of strong evidence that pre-emptive admission to critical care immediately following surgery is beneficial, some might argue that high-risk patients would do just as well recovering on general surgical wards or high-acuity care wards postoperatively, and only later getting transferred to critical care (reactive admission) when they deteriorate or exhibit early signs of complications. An intuitive way of looking at this is that avoiding critical care when it is not needed avoids exposing patients to the potential deleterious effects of the intervention &mdash; in a commentary by Taccone *et al*, it has even been argued that critical care: 
+
+> *"could paradoxically be more harmful than beneficial for elective surgical patients because of potential side effects, such as increased risk of nosocomial infections, reduced access to early mobilization, oversedation, sleep deprivation, stress, and delirium."* &mdash; Taccone *et al* (2017) [@taccone_we_2017]
+
+Taccone and colleagues further argue that a postoperative "intermediate care" ward may be sufficient for most surgical patients, avoiding exposure to the side effects of critical care [@taccone_we_2017]. The idea that high-risk surgical patients could be managed in alternative settings outside of traditional critical care has also been mooted by Sobol and Wunsch in a 2011 review article [@sobol_triage_2011], where they cite a study in which patients were admitted to a lower intensity "Post Anaesthesia Care Unit" (PACU) instead with no increased incidence of postoperative morbidity and mortality [@schweizer_opening_2002]. These areas of "intermediate", "enhanced" or "high-acuity" care will be touched on further in this chapter. 
+
+## The right treatment for the right patient?
+
+Due to the equipoise over benefit, relative scarcity of critical care beds, and the differences in local practices and case-mix, deciding which patients to admit to critical care immediately after surgery is not straightforward. A number of strategies exist to help triage patients for admission [@ghaffar_icu_2017], which often involve some form of risk assessment to identify the patients at highest risk of complications from their surgery. Risk stratification works on the assumption that high-risk patients are most likely to benefit from critical care interventions. Pre-emptive critical care admission may be able to prevent high-risk patients from developing anticipated complications, which become more difficult to treat once they happen, and may result in irreversible decline leading to mortality (an event known as "failure to rescue") [@ahmad_use_2017].
+
+An alternative strategy is to protocolise admissions to critical care for certain procedure types, based on their anticipated care needs following surgery, regardless of their risk profile. This strategy has become a standard of care in certain surgical specialties in the UK, for example in cardiothoracic surgery, critical care facilities are ring-fenced for postoperative cardiac surgery patients [@smith_guidance_2016; @richens_getting_2018]. Similarly in Israel, consensus guidelines recommend all postoperative vascular surgery or major general surgery patients with severe underlying systemic disease be admitted to critical care [@simchen_survival_2007; @sobol_triage_2011].
+
+A third strategy is the identification of patients who would most likely benefit from critical care [@fan_deciding_2007], and preferentially admitting patients with maximum expected benefit over patients with little or no benefit expected [@gruppo_di_studio_ad_hoc_della_commissione_di_bioetica_della_siaarti_siaarti_2003; @sobol_triage_2011].
+
+Although UK recommendations advise clinicians to admit patients to postoperative critical care if their risk is high [@anderson_higher_2011; @findlay_knowing_2011], a number of observational studies have suggested that a large proportion of patients who go on to die after their surgery were not directly admitted to critical care postoperatively [^HindsightBias], and instead spend the initial hours and days recovering from surgery on the general surgical ward [@pearse_mortality_2012; @the_international_surgical_outcomes_study_group_global_2016; @gillies_intensive_2017]. 
+
+In the European Surgical Outcomes Study (EuSOS), a study of 46,539 patients undergoing surgery over a 7-day period in 28 European countries, 73% of the patients who died were not admitted to critical care at any stage after their operation [@pearse_mortality_2012]. In the International Surgical Outcomes Study (ISOS), a global study of 44,814 patients undergoing elective inpatient surgery in 27 countries across 6 continents [^ISOS], 28% of the patients who died were not admitted to critical care at any stage during their admission [@the_international_surgical_outcomes_study_group_global_2016]. In a retrospective cohort study of 572,598 Scottish patients undergoing surgery using linked registry data, Gillies *et al* found that only 4.8% of the highest-risk patients in their cohort were admitted directly to critical care postoperatively, and that subsequent (indirect) critical care admission was associated with increased mortality in this group even after adjustment for potential confounders [@gillies_intensive_2017].
+
+[^HindsightBias]: While this is generally accepted in the literature as evidence that patients requiring critical care are not appropriately allocated, looking back retrospectively at whether the patient received critical care immediately following surgery, after already knowing that the patient has already died, introduces hindsight bias in the process. A better approach would be to prospectively determine who should receive critical care based on anticipated (predicted) risks. This will be the approach adopted in this thesis, and will be examined in later chapters.
+
+[^ISOS]: ISOS also further showed that 5,270 (11.8%) of their cohort who were not immediately admitted to critical care after their surgery, later went on to develop complications, and of these 365 (6.9%) later required admission to critical care for rescue treatment.
+
+Two hypotheses exist to explain why high-risk patients are not being admitted directly to critical care following their operations, which will be briefly examined below, and which will shape the questions that this thesis will set out to answer [@moonesinghe_snap-2_2017; @wong_2nd_2016; @wong_snap-2:_2017].
+
+### Hypothesis 1: Insufficient resource due to critical care bed scarcity and costs
+
+Critical care is regarded a scarce resource and an expensive intervention due to the reliance on highly-trained staff and increased numbers of nurses and doctors per patient (Figure 1-1), therefore it is subject to rationing at multiple levels, from the macro- (at state and government level) to the micro-level (at the patient bedside) [@abu_al-saad_principles_2017]. Advanced organ support technologies available within critical care units further increases the financial burden of delivering care on these units as equipment are costly to run and maintain. In the UK, the daily cost of critical care ranges from £838 to £2,075 [@noauthor_2017-18_2018], depending on the intensity of organ support requirements and types of pathology treated, with an average of £1,328 per day estimated by Ridley and Morris in 2004 (approximately £2,002, after adjustment for inflation[^InflationAdjustment] to 2018 prices) [@ridley_cost_2007]. These costs are comparable in other developed nations, for example, in the United States of America (USA) daily costs of critical care were estimated in 2005 at between US\$2,698 to US\$3,518 (approximately £2,052 to £2,675 using 2018 exchange rates), and in other European countries in 2007 from €1,168 to €2,025 (approximately £1,004 to £1,740 using 2018 exchange rates) [@halpern_critical_2010; @tan_direct_2012]. In contrast, the cost of an average general hospital ward is estimated at £294 per day in the UK (2004 estimate adjusted for inflation) [@ridley_cost_2007].
+
+[^InflationAdjustment]: Prices adjusted for consumer price inflation using the Bank of England Inflation Calculator (available from https://www.bankofengland.co.uk/monetary-policy/inflation/inflation-calculator).
+
+In a study of critical care services across countries in North America and Europe using administrative data, Wunsch *et al* identified a correlation between the per capita healthcare expenditure and per capita ICU bed numbers in the 8 countries they studied [@wunsch_variation_2008]. This implied that the differences in critical care costs may induce regional differences in the availability of critical care beds at the population-level, which are related to how health services are financed and delivered in different countries. They further showed that there was an inverse correlation between the availability of ICU bed capacities and reported frequency of sepsis diagnoses, and between the hospital mortality of patients in these countries. Their second finding provides some evidence to support the assertion that variations in critical care bed availability are associated with variations in prioritisation of patients for admission to critical care and/or affect the outcomes of patients.
+
+The UK has an estimated 3.5 to 6.6 critical care beds per 100,000 population, which represents 1.2% to 2.8% of total inpatient hospital beds [@wunsch_variation_2008; @adhikari_critical_2010; @rhodes_variability_2012; @gillies_regional_2015]. These numbers are comparatively lower than the European average of 11.5 to 14.9 critical care beds per 100,000 population [@wunsch_variation_2008; @rhodes_variability_2012], and North American critical care bed capacities reported in the literature (Canada: 13.5 and USA: 20.0 per 100,000 population) [@wunsch_variation_2008; @adhikari_critical_2010]. Consequently, it may be that the UK does not have adequate capacity to pre-emptively admit all high-risk patients to critical care following surgery, or that clinicians are deciding not to admit patients to critical care who might benefit from the intervention because of the scarcity of beds. 
+
+Evidence from EuSOS suggests that the proportion of patients admitted postoperatively to critical care varied widely between countries [@pearse_mortality_2012]. As an exploratory analysis for this thesis, I extracted published data from papers authored by Pearse *et al* [@pearse_mortality_2012] and Rhodes *et al* [@rhodes_variability_2012], and modelled the proportions of critical care admissions reported by each country in the former (dependent variable) against the critical care bed availabilities in each country as reported in the latter (independent variable) using linear regression [^EuSOSRegression]. This model suggested that a large proportion of the variability between countries might be explained by the variability in critical care bed numbers per 100,000 population (Figure 1-3). At least on a macro-level, patients undergoing surgery had differing probabilities for being admitted to critical care which were associated with the critical care bed availabilities in the countries where they were receiving treatment.
+
+```{r intro_Fig1-3, echo=FALSE, message=FALSE, warning=FALSE, fig.height=5, fig.cap="Figure 1-3: Postoperative admission to critical care. The percentage of patients admitted to critical care postoperatively in the EuSOS study is associated with the critical care bed capacities in their respective countries. Data adapted from Pearse et al (2012), and Rhodes et al (2012)."}
+capacity_Eusos <- read.csv("../data/Admission_Capacity_EuSOS_Rhodes.csv")
+ggplot(capacity_Eusos, aes(x = Rhodes_Crit_Care_Capacity, y = EuSOS_Crit_Care_Adm)) +
+  geom_point() + 
+  #geom_smooth(method = "lm", se = FALSE) +
+  geom_text_repel(aes(x = Rhodes_Crit_Care_Capacity, y = EuSOS_Crit_Care_Adm, 
+                      label = Country)) +
+  labs(x = "Critical Care Beds per 100,000 population", 
+       y = "Percentage of EuSOS patients admitted to critical care (%)",
+       title ="Postoperative admission rates to critical care by country",
+       subtitle = "Data adapted from Pearse et al (2012), and Rhodes et al (2012)") +
+  theme_classic()
+```
+
+[^EuSOSRegression]: Published data tables from Pearse *et al* (2012), and Rhodes *et al* (2012) were scraped, and values for criticial care capacity per 100,000 population and percentage of EuSOS study patients admitted immediately to critical care after their operation were linked by country name [@pearse_mortality_2012; @rhodes_variability_2012]. A simple linear regression of percentage of patients admitted to critical care postoperatively (dependent variable $y$) against critical care capacity (independent variable $x$) was performed. A linear model: $y = 0.368 x + 2.407$ was obtained with an $R^2$ = 0.289, p-value for $x$ = 0.002.
+
+While critical care is traditionally delivered in ICUs and HDUs in the UK, a subset of the interventions normally associated with critical care could be delivered in alternative "enhanced care" or "high-acuity" care settings elsewhere within the hospital. These other areas may have the resources to care for patients who require one or more interventions normally associated with critical care. For example, within the Emergency Department, resuscitation bays have the facilities to temporarily care for critically ill patients requiring intensive nursing/medical interventions. Another example would be the cardiologists' Coronary Care Unit, which may have the ability to deliver 1:1 or 1:2 nursing, invasive blood pressure monitoring, continuous ECG telemetry and inotropic/vasopressor support. The use of such high-acuity care areas to deliver postoperative care has been reported in the UK's _Critical Futures_ project commissioned through by FICM [@batchelor_critical_2017] However, these high-acuity care beds are currently ill-defined in the literature, and little is known of their prevalence and make-up. 
+
+Their presence in hospitals are not the result of regulations issued by professional bodies. This therefore means there is the potential for variation in what medical interventions they are able to offer and how they are staffed, and there is no clear agreement on whether they should be defined as critical care units. For example, on these units, high-risk patients may be cared for by ward nurses in conjunction with support from Critical Care Outreach Teams (CCOT), or with anaesthetists and surgeons jointly managing the patients’ medical care. 
+
+In the first _Critical Futures_ report, such facilities were referred to as "Level 1+" enhanced recovery services, without being labelled as critical care units *per se* [@batchelor_critical_2017]. In this report, the authors presented survey results pointing to gaps in services in which high-acuity beds may have evolved to manage the postoperative recovery of high-risk surgical patients. They may be considered to provide sufficient support for postoperative recovery that high-risk patients then bypass ICU/HDU entirely during their hospital stay. Such a scheme could be considered a modification (Figure 1-4) of the earlier surgical pathway depicted in Figure 1-1. The lack of regulation surrounding the make-up and delivery of care in such enhanced care areas has prompted the formation of a working parties within FICM and the Royal College of Physicians of London to produce guidance on how high-acuity services can be further evolved to deliver care in this space. An open consultation is currently underway seeking feedback from stakeholders on a draft guidance document produced by this working group to regulate enhanced care and high-acuity beds [@ficm__rcp_london_enhanced_care_working_parties_consultation_2019; @faculty_of_intensive_care_medicine_seeking_2019].
+
+```{r intro_Fig1-4_prep, echo=FALSE, message=FALSE, warning=FALSE}
+Pathway_diagram_enhanced <- grViz("
+digraph dot {
+      
+      graph [layout = dot]
+      
+      node [shape = rectangle,
+      style = filled,
+      color = white,
+      width = 3,
+      fontsize = 14,
+      fontname = 'Arial']
+      
+      node [fillcolor = grey]
+      Home [label = 'Home']
+      
+      node [fillcolor = skyblue]
+      Surgical [label = 'Surgical Management']
+      PreOp [label = 'Preoperative planning\n- Address modifiable risks\n- Further investigations']
+      IntraOp [label = 'Intraoperative management\n(Undergoes surgery)']
+      PostOp [label = 'Postoperative recovery']
+      
+      node [fillcolor = pink]
+      ICU [label = 'Critical Care']
+      Ward [label = 'Surgical Ward']
+      
+      node [fillcolor = orange]
+      Enhanced [label = 'High-acuity Care area\n(Enhanced Care / Level 1+ unit)']
+      
+      edge [color = grey, constraint = true]
+      Surgical -> PreOp
+      PreOp -> IntraOp
+      IntraOp -> PostOp
+      PostOp -> {ICU Enhanced Ward}      
+      
+      edge [color = grey, constraint = false]
+      ICU -> {Enhanced Ward}
+      Ward -> {Enhanced ICU}
+
+      edge [color = grey, constraint = true]
+      Enhanced -> {ICU Ward}      
+      
+      edge [xlabel = 'Discharge',
+      fontsize = 14,
+      fontname = 'Arial']
+      Ward -> Home
+
+      }")
+
+Pathway_diagram_enhanced %>% export_svg() %>% charToRaw() %>% rsvg_png("figures/intro_Fig1-4_Pathway.png", height = 850)
+
+Pathway_diagram_enhanced %>% export_svg() %>% charToRaw() %>% rsvg_pdf(file = "figures/intro_Fig1-4_Pathway.pdf")
+```
+
+```{r intro_Fig1-4, echo=FALSE, message=FALSE, warning=FALSE, fig.width=4, dpi=300, fig.cap="Figure 1-4: Enhanced care areas (Level 1+ units) in the surgical pathway. This is a modification of the pathway depicted in Figure 1-1, with the removal of the steps before surgical management is decided in the patient journey."}
+include_graphics(path = "figures/intro_Fig1-4_Pathway.png", dpi = 300)
+```
+
+### Hypothesis 2: Difficulties in risk-prediction
+
+While the majority of patients undergoing surgery are low risk, individuals who have multimorbidity and/or are undergoing complex procedures are at higher risk of complications or death. Where a patient has been identified as high-risk, mitigation strategies such as adopting less invasive surgical approaches (or the avoidance of surgery altogether), and admission to postoperative critical care, might serve to improve patient survival. Discriminating between who is high risk from who is low risk is a difficult task, and various methods are employed, e.g. using subjective clinical assessment, additional physiological investigations or objective risk-stratification tools. 
+
+A large number of objective clinical scoring systems exist to help risk-stratify patients undergoing surgery [@moonesinghe_risk_2013], but their use is variable among clinicians and may be tempered by prior beliefs. Previous research has demonstrated that the majority of patients do not have mortality risks documented or quantified [@moonesinghe_individualised_2013], even those undergoing surgical procedures which are known to be associated with a high risk of mortality [@nela_project_team_first_2015] &mdash; in the UK, an estimated one third of elective major surgical patients, and one quarter of emergency abdominal surgery patients are thought to not have a risk assessment recorded before their surgery [@pqip_project_team_perioperative_2018; @nela_project_team_fourth_2018]. Risk stratification tools are predominantly multivariable regression models which may use a large number of predictor variables, not all routinely available prior to surgery. These tools have also largely been derived using retrospective cohort data, sometimes with small datasets and unknown generalisability (external validity) to patient cohorts that might differ in time and place to the original derivation cohort. 
+
+What constitutes a high-risk patient may, in many instances, ultimately boil down to a subjective opinion of the surgeon and anaesthetist, based on the clinical information at hand. Clinicians may therefore be inaccurately predicting their patients' risks of complications following surgery, and thus not adjusting their management accordingly. High-risk patients may be inappropriately identified as low-risk and recommended for postoperative admission to general surgical wards, and low-risk patients conversely recommended for critical care when they would not benefit. Perhaps the failure to admit high-risk patients appropriately to critical care after their surgery is in fact a failure of appropriately identifying the high-risk patient in advance.
+
+It is unclear how good the subjective clinical assessment of patient risk is during the perioperative period. In a literature search to identify previous studies which examined this issue[^PubMedTerms], a number of studies were identified that investigated the performance of subjective clinical assessment in predicting perioperative mortality or morbidity risk, or investigated the value of adding subjective variables to risk prediction in surgical risk assessment (study details summarised in Table 1-6) [@pettigrew_indicators_1986; @pettigrew_evaluating_1987; @pons_subjective_1999; @markus_predicting_2005; @woodfield_accuracy_2007; @cohen_effect_2009; @karliczek_surgeons_2009; @bilimoria_development_2013; @pommerening_clinical_2015; @cowger_intermacs_2016; @buchlak_seattle_2017; @wang_predictive_2017; @woodfield_accuracy_2017; @kwan_prediction_2018; @wijeysundera_assessment_2018]. While the majority of these were small, single centre studies, five of these studies recruited patients and clinicians from multiple centres [@pons_assessing_1997; @pons_subjective_1999; @cohen_effect_2009; @bilimoria_development_2013; @wijeysundera_assessment_2018]. 
+
+| Study                                        | Sample Size (n) | Centres | Country   |Details |
+|:---------------------------------------------|----------------:|--------:|----------:|--------|
+|Pettigrew and Hill 1986 [@pettigrew_indicators_1986]|              218|        1|New Zealand|Prospective study. Surgeons graded patient risks of major complications or mortality just prior to performing elective major gastrointestinal surgery, recording risk on a visual analogue scale; this was compared against a structured clinical assessment tool based on 7 organ systems (respiratory, cardiovascular, etc.) which each had a 5 point scale (0 = "no risk", 4 = "major risk"), and against other prognostic tools including plasma protein measurements and three other prognostic indices incorporating biochemical measurements. Subjective risk assessment by surgeons was less accurate than the structured clinical assessment tool and other tools incorporating plasma protein levels. No Receiver Operating Characteristic (ROC) curve analysis nor calibration analysis was conducted.|
+|Pettigrew *et al* 1987 [@pettigrew_evaluating_1987] |              113|        1|New Zealand|Prospective study. Patients undergoing elective gastrointestinal surgery were subjectively risk assessed by surgeons using a visual analogue scale once preoperatively and once immediately postoperatively, these risk assessments were compared against a subjective clinical assessment based on history and examination by a different clinician not performing the surgery, and against serum albumin levels. Visual analysis of ROC curves showed postoperative assessment by the surgeon was superior to preoperative assessment by the surgeon,  subjective clinical assessment by another clinician, and serum albumin level.|
+|Pons *et al* 1999 [@pons_subjective_1999]           |            1,309|        7|      Spain|Prospective study. Mortality predictions based on surgeons' subjective risk assessment (Area Under the ROC curve [AUROC] = 0.70) were compared against a regression model (AUROC = 0.76) in both elective and emergency open heart cardiac surgery patients. Subjective risk assessment was graded in 5 categories as "low" to "extremely high". Calibration of surgeons' subjective risk assessment was poor.|
+|Markus *et al* 2005 [@markus_predicting_2005]       |            1,077|        1|    Germany|Prospective study. Patients undergoing elective and emergency major hepatobiliary or gastrointestinal surgery were given a subjective predicted risk of developing postoperative morbidity by surgeons on a scale of 0 to 100% (in steps of 10%). These predictions were made immediately following surgery and compared with predictions made using the Physiological and Operative Severity Score for the enUmeration of Mortality and morbidity (POSSUM). Surgeons' subjective risk assessment was more closely correlated with actual morbidity outcomes than POSSUM as analysed using calibration curves. POSSUM-predicted morbidity overpredicted risks. ROC curve analysis was not performed.|
+|Woodfield *et al* 2007 [@woodfield_accuracy_2007]   |            1,013|        1|New Zealand|Prospective study. Patients undergoing abdominal surgery received a subjective surgeon assessment of risk of major complications and mortality graded using visual analogue scales immediately preoperatively and postoperatively. Preoperative and postoperative assessments were compared against each other. Preoperative prediction of mortality (AUROC = 0.74) and major complications (AUROC = 0.67) and were not significantly different to postoperative predictions (AUROC = 0.75 and 0.69 for mortality and major complications, respectively). Including preoperative surgical assessment in a multivariable logistic regression model incorporating a range of other objective variables (a modification of the Otago Audit Model) improved the accuracy of predictions by a small margin (AUROC = 0.78).|
+|Cohen *et al* 2009 [@cohen_effect_2009]             |           28,751|      170|        USA|Retrospective study. Data from patients undergoing colorectal surgery was extracted from the American College of Surgeons' National Surgical Quality Improvement Program (ACS NSQIP) database. The effect of including subjective measures of risk in logistic regression models for predicting morbidity and mortality was assessed by constructing models with, and without, American Society of Anesthesiologists Physical Status (ASA-PS) and Functional Health Status (FHS) variables. ASA-PS is a 5-category scale (I to V) and FHS is a 3-category classification system ("independent", "partially dependent" and "totally dependent"). A model with ASA-PS and FHS exhibited better calibration and discrimination (AUROC = 0.912) than models excluding either ASA-PS (AUROC = 0.909), or FHS (AUROC = 0.909), or both (AUROC = 0.905).|
+|Karliczek *et al* 2009 [@karliczek_surgeons_2009]   |              191|        1|    Holland|Prospective study. Patients undergoing colorectal surgery requiring bowel anastomosis were subjectively assessed for risk of anastomotic leak by the surgeon using a visual analogue scale. Surgeons' subjective prediction of anastomotic leak performed poorly as assessed using ROC curve analysis (AUROC not reported).|
+|Bilimoria *et al* 2013 [@bilimoria_development_2013]|        1,414,006|      393|        USA|Retrospective study. Data from patients undergoing a range of surgical procedures was extracted from the ACS NSQIP database, and a risk calculator was created using 8 regression models developed to predict outcomes for mortality, morbidity and 6 specific other complications. Subjective surgeon modification of risks computed by the models were incorporated using a Surgeon Adjustment Score (SAS, a categorical variable of 1, 2 or 3), and allowed model-computed scores to be increased by +0, +1 or +2 standard deviations of predicted risks for a particular surgical procedure. Inter-rater agreement of the SAS was tested in 80 surgeons using 10 simulated patient scenarios which varied in complexity and included additional comorbidities or factors not originally modelled in the regression models. Performance of the regression models were excellent (AUROC ranging from 0.80 to 0.94). Inter-rater agreement for SAS categorisation was good among surgeons for each scenario (80% to 100% agreement), however performance of SAS-modified risks was not assessed.|
+|Pommerening *et al* 2015 [@pommerening_clinical_2015]|             966|       10|        USA|Prospective study. Trauma surgeons subjectively predicted immediately after major trauma patients arrived to hospital whether the patients were likely (binary yes/no) to require massive transfusion of blood products (defined as &ge;10 units of red blood cells within 24hrs). Subjective trauma surgeon prediction performed acceptably for predicting massive transfusion (AUROC = 0.65), and massive transfusion or death (AUROC = 0.66). The Trauma Associated Severe Hemorrhage (TASH) score performed significantly better (AUROC = 0.72) at predicting massive transfusion but required seven independent variables, including some laboratory measurements. Therefore, due to absent data, almost half the cohort was excluded in the analysis comparing subjective assessment with TASH.|
+|Cowger *et al* 2016 [@cowger_intermacs_2016]         |          10,802|      202|        USA|Retrospective study. Data were extracted from patients undergoing assessment for suitability of insertion of a Left Ventricular Assist Device (LVAD) in the Interagency Registry for Mechanically Assisted Circulatory Support (INTERMACS). These patients were subjectively assigned Profiles (one of seven possible categories) to describe their clinical status based on haemodynamic stability, inotrope use and functional capacity. Three additional risk Modifiers were also assigned to patients including the need for temporary circulatory support, presence of arrhythmia, and frequent flyer status. The accuracy of Profiles and Modifiers to predict mortality outcome was assessed using survival analysis, and of the Modifiers assessed, frequent flyer status was the only one that predicted mortality. The study further assessed the heterogeneity in assignment of Profiles through a prospective web-based survey of clinicians based in each institution which presented five hypothetical patient scenarios. This survey demonstrated inconsistency in Profile assignment between respondents.|
+|Buchlak *et al* 2017 [@buchlak_seattle_2017]         |             136|        1|        USA|Prospective study. A multivariable logistic regression model was developed to predict postoperative complications in 136 patients undergoing complex spinal surgery (AUROC = 0.71). This model was then used to produce a risk prediction calculator and its implementation was assessed in an experiment involving 8 physicians. A hundred random patient scenarios were created using de-identified data and histories and presented to the physicians who were asked to predict whether the patients in the scenarios went on to develop complications (binary classification). Physicians were randomly presented the scenarios with and without the aid of the risk prediction calculator and also in differing orders of data-presentation. Predictions significantly improved in accuracy when physicians were aided by information from the risk prediction calculator.|
+|Wang *et al* 2017 [@wang_predictive_2017]            |             242|        1|      China|Retrospective study. Patients undergoing lumbar spinal surgery were risk assessed using the ACS NSQIP risk calculator described in the earlier study by Bilimoria *et al* above [@bilimoria_development_2013]. The Surgeon Adjustment Score was used to modify risks upwards if patients exhibited additional risk factors including previous cardiac events and/or cerebrovascular disease. The ACS NSQIP risk calculator performed well for predicting renal failure (AUROC = 0.83), hospital readmission (AUROC = 0.84), and mortality (AUROC = 0.97), but only acceptably for predicting cardiac complications (AUROC = 0.65), any serious complications (AUROC = 0.67), any complication (AUROC = 0.68), and pneumonia (AUROC = 0.69). Its performance for other complications exhibited substantial variation (AUROC ranging from 0.31 to 0.60). Calibration was acceptable for all the outcome predictions (Hosmer-Lemeshow test p >0.05 for all).|
+|Woodfield *et al* 2017 [@woodfield_accuracy_2017]   |1,295 predictions|        1|         UK|Prospective study. Conducted in three phases, a total of 859 patients had 1,295 risk predictions made. Phase I: patients undergoing major elective or acute abdominal surgery were risk assessed by the surgeon or their assistant for the risk of major complications on a visual analogue scale immediately preoperatively (AUROC = 0.78) and postoperatively (AUROC = 0.81), these were then compared to POSSUM (AUROC = 0.75). Phase II: visual analogue scales were modified with 6 additional subscales for different areas of clinical risk (functional status, cardiac and respiratory morbidity, severity of surgical pathology, complexity of surgery, urgency of surgery, and "other"), before a global risk assessment was made; prediction performance was similar to Phase I. Phase III: surgeons were given feedback on the accuracy of their predictions in Phases I and II, before then being asked to make predictions on subsequent fresh patients using the Phase II visual analogue scale tool; performance for this phase improved for both preoperative (AUROC = 0.90) and postoperative (AUROC = 0.92) predictions.|
+|Kwan *et al* 2018 [@kwan_prediction_2018]           |  275 predictions|        1|  Hong Kong|Retrospective study. Fifty-five Patients who underwent spinal surgery for metastatic spinal tumours were reviewed and their data were used to construct anonymised clinical scenarios. These scenarios were presented to five oncologists who made subjective predictions of patient survival, and these were compared against an objective modified Tokuhashi score prediction. Subjective survival prediction by oncologists had a higher agreement with actual patient survival (Cohen's kappa = 0.52), than predictions made by modified Tokuhashi score (Cohen's kappa = 0.31, p = 0.02). Subjective survival predictions also showed high inter-rater reliability between oncologists (Intra-Class Correlation [ICC] = 0.71), and high test-retest reliability over time (ICC = 0.69).|
+|Wijeysundera *et al* 2018 [@wijeysundera_assessment_2018]|       1,401|       25| Australia, UK, Canada and New Zealand|Prospective study. Patients undergoing elective major non-cardiac surgery with risk factors for cardiac complications were subjectively graded by anaesthetists on their functional capacity in terms of units of metabolic equivalents of tasks (METS) as poor (<4 METS), moderate (4-10 METS) or good (>10 METS). Their assessments were compared against objective tools including the Duke Activity Status Index (DASI) questionnaire, Cardiopulmonary Exercise Testing (CPET), and N-terminal pro-B Natriuretic Peptide (NT pro-BNP) levels, for predicting postoperative mortality or complications. Each variable was added to a baseline multivariable logistic regression model and the incremental value of each variable was assessed using AUROC and Net Reclassification Improvement. Subjectively assessed functional assessment of METS alone performed poorly for predicting a composite outcome of 30-day mortality or myocardial infarction (AUROC = 0.57) and for predicting 1-year mortality (AUROC = 0.55). Models incorporating DASI performed better than models which incorporated the other variables, for many of the outcomes tested.|
+
+Table: Table 1-6: A summary of studies investigating the performance of subjective clinician assessment of mortality and morbidity risks in patients undergoing surgery.
+
+Within these studies, there was heterogeneity in the way subjective clinical assessment of risk was recorded, with some studies using visual analogue scales, some asking the clinician to provide a binary prediction of whether they anticipated a patient to meet with perioperative complications, and some asking for a prediction on an ordinal categorical scale. Furthermore, these studies were heterogenous in design, with some using retrospective case note vignettes presented to clinicians for subjective assessment outside of routine clinical care, and others prospectively seeking a subjective clinical risk assessment in patients preoperatively or immediately post-surgery. Overall, the findings of these studies were equivocal in ascertaining the value and accuracy of subjective clinical assessment in predicting perioperative risk.
+
+Outside of the perioperative literature, subjective assessment of patients has also been studied in medical patients being assessed for admission to critical care, and clinician predictions have been found to be associated with "prognostic pessimism" in this scenario [@fan_deciding_2007; @wildman_survival_2009; @wildman_predicting_2009]. Wildman *et al* compared the performance of an outcome prediction model for Chronic Obstructive Pulmonary Disease (COPD) patients presenting with an acute exacerbation against subjective clinical assessments of 180-day mortality in the COPD and Asthma Outcome Study (CAOS) [@wildman_predicting_2009; @wildman_survival_2009]. They demonstrated that clinical assessments were mis-calibrated, while maintaining reasonable discrimination, but that the calibration and discrimination of a multivariable regression model was significantly better. In other studies of acute medical patient admissions to hospital, subjective clinical assessments have been compared against physiological scoring systems for predicting length of stay and mortality [@brabrand_nurses_2014; @azadeh-fard_can_2016]. In these studies, subjective clinical assessments were found to have good discriminatory performance, and objective physiological variables did not improve predictions.
+
+[^PubMedTerms]: The search was performed in the PubMed database using the terms *("perioperative"[All Fields] OR "preoperative"[All Fields] OR "surgery"[All Fields] OR "operation"[All Fields] OR "operative"[All Fields]) AND ("complication"[All Fields] OR "mortality"[All Fields] OR "Postoperative Complications"[Mesh]) AND ("risk"[All Fields] OR "predict"[All Fields] OR "risk prediction"[All Fields] OR "evaluation"[All Fields] OR "assessment"[All Fields] OR "stratification"[All Fields] OR "Risk Assessment"[MeSH Terms]) AND ("subjective"[All Fields] OR "clinical"[All Fields]) AND ("performance"[All Fields] OR "accuracy"[All Fields] OR "discrimination"[All Fields] OR "calibration"[All Fields])*. The search was restricted to English-language articles reporting relevant studies in adult perioperative patients published before between 24 December 2008 and 20 December 2018. I supplemented the PubMed database search with hand-searches of reference lists from relevant reviews and practice guidelines. Two thousand seven hundred and forty-four abstracts were screened and 15 published studies were found that are included in this introduction chapter.
+
+While the value of subjective clinical risk assessment has not been clearly demonstrated, and more objective risk prediction tools are widely available, implementation of these objective tools to support clinical assessment have been challenging [@moonesinghe_implementing_2018]. Futhermore, improving their uptake in clinical practice has required the concerted efforts of multiple agencies and national projects in the UK. In contrast, more complex and expensive investigations for risk-stratification, like cardiopulmonary exercise testing (CPET), have been growing in popularity [@reeves_cardiopulmonary_2018], despite evidence that simple tools may have equivalent performance to CPET [@wijeysundera_assessment_2018].
+
+## Research questions and the structure of the rest of the thesis
+
+In this chapter, I have introduced the concept of surgery as a period of increased physiological stress predisposing patients to adverse events. I have described the surgical pathways undertaken by patients in the UK and the potential to mitigate perioperative risks by admitting patients to critical care. Although guidelines exist in the UK which recommend that high-risk patients should be admitted to critical care postoperatively, I have briefly described the evidence that many high-risk patients do not receive planned postoperative critical care despite the recommendations. I visited three hypotheses which may explain this phenomenon, summarised as: firstly, insufficient resource for managing high-risk postoperative patients due to critical care bed scarcity and costs; secondly, difficulties in risk- and benefit-prediction and hence poor identification of high-risk patients or those patients who may benefit from critical care; and thirdly, equipoise over the perceived benefits of critical care on perioperative recovery. These hypotheses may provide an explanation to why there appears to be a mismatch between the clinical recommendations and the reality of patient care on the ground.
+
+In this PhD thesis I will examine the first two of these hypotheses in detail &mdash; the availability of critical care beds, and the accuracy of risk assessment in the identification of patients appropriate for critical care. The data I will use to do this will come from the Second Sprint National Anaesthesia Project: EPIdemiology of Critical Care provision after Surgery (SNAP-2: EPICCS) study, a prospective observational cohort study I designed with the supervision of my thesis advisors, and which was conducted in 2017 across hospitals in the UK, Australia and New Zealand. 
+
+SNAP-2: EPICCS has been used to produce significant research outputs during the course of my PhD, two of which I have had published in peer-reviewed journals [@wong_cancelled_2018; @wong_postoperative_2019]. The analyses within this thesis will include some of those previously published works.
+
+SNAP-2: EPICCS was designed to answer the following research questions[^OmittedResearchQuestion]:
+
+1. What is the availability of critical care, including high-acuity care areas?
+2. How do clinicians estimate postoperative risk?
+3. How accurate are currently available risk prediction tools?
+4. How do clinicians decide which patients to admit for postoperative critical care?
+5. What factors influence patient admission to postoperative critical care?
+
+[^OmittedResearchQuestion]: Further research questions which SNAP-2: EPICCS was initially designed to answer, related to the third hypothesis (i.e. whether postoperative critical care improves outcomes), are beyond the scope of this thesis, but may form the basis for future postdoctoral research which I will discuss in Chapter 8.
+
+In *Chapter 2*, an overview of SNAP-2: EPICCS will be presented. The project comprises a number of separate elements designed to obtain empirical patient- and hospital-level data to investigate the hypotheses and answer the research questions above. 
+
+I will then present the findings of 4 studies in *Chapters 3&ndash;7*, designed to answer the research questions presented. 
+
+In *Chapter 3*, I will report a study quantifying the availability of postoperative critical care beds, and other high-acuity beds which clinicians may use to manage high-risk perioperative patients. This study will provide updated estimates of critical care capacity, expressed as a proportion of hospital beds within institutions, and expressed as a number of beds per capita population. The estimates reported will be discussed in context of international numbers from best estimates from the literature reviewed in *Chapter 1*. 
+
+In *Chapter 4*, I will describe an inpatient surgical cohort which was raised for the main part of SNAP-2: EPICCS. In *Chapter 5*, I report the surgical epidemiology of patients undergoing surgery in the UK, Australia and New Zealand, and describe the risk profile of these patients. This study will use the preoperatively-collected baseline risk variables, intraoperative-collected procedure variables, and the postoperatively-collected outcomes data related to patients undergoing surgery, to characterise the population exposed to surgical interventions in the three countries. In *Chapter 6*, I will report a study examining the accuracy of risk prediction tools currently in use clinically, and compare their accuracy to subjective clinical assessment. The study reported in *Chapter 6* will go on to identify the tools which clinicians use to provide risk estimates in day-to-day clinical practice. In *Chapter 7*, I will report a study investigating the patient- and hospital-level factors which are associated with the likelihood of patients receiving a clinical recommendation for postoperative critical care, and also further examine the factors which then influence whether a patient actually goes on to receive critical care.
+
+In *Chapter 8*, I will conclude with a summary of study findings reported in the preceding chapters and relate them to the research questions as outlined. A brief description of the impact of my research findings will be presented, and the future directions which this work can take will be discussed.
+
+Finally, in Chapter 9, I will reflect on the personal lessons I have learned during this PhD.
+
+##### PAGE BREAK

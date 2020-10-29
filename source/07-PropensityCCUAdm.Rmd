@@ -1,0 +1,1374 @@
+---
+title: 'Chapter 7: Propensity for Admission to Critical Care After Surgery'
+subtitle: "Factors influencing postoperative critical care recommendation and admission"
+author: "Danny Wong"
+date: "13/08/2019"
+csl: ../references/bib/the-lancet.csl
+bibliography: ../references/bib/SNAP2.bib
+link-citations: yes
+description: "This is Chapter 7 of Danny's PhD Thesis"
+output: 
+  word_document:
+    reference_docx: styles.docx
+---
+
+# Propensity for Admission to Critical Care After Surgery
+
+```{r PropensityCCUAdm_setup, echo=FALSE, warning=FALSE, message=FALSE, results="hide", include=TRUE}
+knitr::opts_chunk$set(echo = FALSE, dpi = 300)
+options(scipen=2, digits=2)
+
+#Load libraries and data
+library(tidyverse)
+library(knitr)
+library(tableone)
+library(ggeffects)
+library(sjmisc)
+library(sjPlot)
+library(sjlabelled)
+library(lme4)
+library(splines)
+library(pander)
+library(DiagrammeR) #Needs ver. 0.9.2 to work
+library(DiagrammeRsvg)
+library(cowplot)
+source("../scripts/helper_functions/MOR.R")
+panderOptions('table.split.table', Inf)
+
+#Load patient-level data
+load("../data/SNAP2_combined_clean.Rdata") 
+
+#Load procedure list
+procedure_list <- read.csv("../data/SNAP2_procedurelist_specialty_coded.csv") %>% select(Code, Specialty)
+
+#Load hospital-level data
+Org_Survey_Site_UK <- read.csv("../data/Org_Survey_Site_Output.csv", stringsAsFactors = FALSE) %>%
+  select(-X, -trustName, -responseID, -tertiaryServicesOther, -policiesSpecOther, -generalFreeText)
+
+Org_Survey_Site_ANZ <- read.csv("../data/Org_Survey_Data_Aus_Site.csv", stringsAsFactors = FALSE) %>%
+  bind_rows(read.csv("../data/Org_Survey_Data_NZ_Site.csv", stringsAsFactors = FALSE)) %>%
+  select(-X, -tertiaryServices)
+
+Org_Survey_Site_ANZ <- read.csv("../data/Org_Survey_ANZ_SiteCode_key.csv", stringsAsFactors = FALSE) %>%
+  select(hospitalName, SiteCode) %>%
+  right_join(Org_Survey_Site_ANZ)
+
+Org_Survey_Site <- bind_rows(Org_Survey_Site_UK, Org_Survey_Site_ANZ)
+rm(list = c("Org_Survey_Site_UK", "Org_Survey_Site_ANZ"))
+
+#Load free-text analyses
+Reasons_for_referral <- read.csv("../data/Reasons_for_referral.csv") %>%
+  mutate_all(., ~tidyr::replace_na(., 0))
+
+#Load daily occupancy data
+occupancy <- readRDS("../data/occupancy_long_clean_combined.rds")
+
+#Create scaled hospital-level variables
+Org_Survey_Site <- Org_Survey_Site %>%
+  mutate(tertiaryServicesAny = ifelse((bariatrics == TRUE |
+                                         boneMarrowTx == TRUE |
+                                         burns == TRUE |
+                                         cardiothoracics == TRUE |
+                                         complexColorectal == TRUE |
+                                         complexCardiology == TRUE |
+                                         ecmo == TRUE |
+                                         hpb == TRUE |
+                                         hasu == TRUE |
+                                         majTrauma == TRUE |
+                                         maxFax == TRUE |
+                                         neurosurgery == TRUE |
+                                         transplants == TRUE |
+                                         upperGI == TRUE |
+                                         vascular == TRUE |
+                                         ortho == TRUE), TRUE, FALSE)) %>%
+  mutate(ccuBedsTot = replace(ccuBedsTot, which(is.na(ccuBedsTot)), 0)) %>%
+  mutate(ccuBedsProp = ccuBedsTot/hospitalBeds,
+         genSurgBedsProp = genSurgTotalBeds/hospitalBeds)
+
+Org_Survey_Site <- transform(Org_Survey_Site, 
+                             hospitalBeds_scaled = scale(hospitalBeds),
+                             ccuBedsProp_scaled = scale(ccuBedsProp),
+                             genSurgBedsProp_scaled = scale(genSurgBedsProp)) #%>%
+#mutate(hospitalBeds_scaled = cut(hospitalBeds_scaled, breaks = 5, 
+#                                 labels = c("Q1", "Q2", "Q3", "Q4", "Q5")),
+#       ccuBedsProp_scaled = cut(ccuBedsProp_scaled, breaks = 5,
+#                                labels = c("Q1", "Q2", "Q3", "Q4", "Q5")),
+#       genSurgBedsProp_scaled = cut(genSurgBedsProp_scaled, breaks = 5,
+#                             labels = c("Q1", "Q2", "Q3", "Q4", "Q5")))
+
+#Bind the hospital-level data to the patient-level data
+patients_clean <- left_join(patients_clean, Org_Survey_Site, by = "SiteCode") %>%
+  select(-hospitalName)
+
+#Join the occupancy data to the patient-level and hospital-level data
+occupancy_temp <- occupancy %>%
+  select(SiteCode, StudyDay, contains("2000")) %>%
+  rename(EmptyBeds2000_daybefore = EmptyBeds2000,
+         DischargeReady2000_daybefore = DischargeReady2000,
+         Treated2000_daybefore = Treated2000,
+         TotalCapacity2000_daybefore = TotalCapacity2000,
+         PropEmpty2000_daybefore = PropEmpty2000) %>%
+  mutate(DayMinus1 = recode(StudyDay, `Tue` = "Wed",
+                            `Wed` = "Thu",
+                            `Thu` = "Fri",
+                            `Fri` = "Sat",
+                            `Sat` = "Sun",
+                            `Sun` = "Mon",
+                            `Mon` = "Tue")) %>%
+  select(-StudyDay)
+
+occupancy <- left_join(occupancy, occupancy_temp, 
+                       by = c("SiteCode" = "SiteCode", "StudyDay" = "DayMinus1"))
+
+patients_clean <- patients_clean %>% left_join(occupancy, by = c("SiteCode" = "SiteCode", "S02StudyDay" = "StudyDay"))
+
+#Compute the critical care bed capacity and empty beds at the time of surgery
+patients_clean <- patients_clean %>% 
+  mutate(S02TimeOfSurgeryStartIncision =
+           as.factor(as.integer(S02TimeOfSurgeryStartIncision))) %>%
+  #Code the critical care capacity at the time of surgery as the capacity corresponding to the start of the 12 hour period when the surgery started. 
+  #i.e. if surgery started between 0800-2000 hours, then the capacity at 0800 is used,
+  #vice versa, if surgery started between 2000-0800 hours at night, then the capacity at 2000hours is used.
+  mutate(CCUCapacityTimeofSurgery = 
+           ifelse(S02TimeOfSurgeryStartIncision %in% c("8", "12", "16"), 
+                  (EmptyBeds0800 + DischargeReady0800),
+                  ifelse(S02TimeOfSurgeryStartIncision %in% c("20"), 
+                         (EmptyBeds2000 + DischargeReady2000),
+                         ifelse(S02TimeOfSurgeryStartIncision %in% c("0", "4"),
+                                (EmptyBeds2000_daybefore + DischargeReady2000_daybefore), NA)))) %>%
+  mutate(EmptyBedsTimeofSurgery = 
+           ifelse(S02TimeOfSurgeryStartIncision %in% c("8", "12", "16"), 
+                  EmptyBeds0800,
+                  ifelse(S02TimeOfSurgeryStartIncision %in% c("20"), 
+                         EmptyBeds2000,
+                         ifelse(S02TimeOfSurgeryStartIncision %in% c("0", "4"),
+                                EmptyBeds2000_daybefore, NA)))) %>%
+  mutate(EmptyBedsTimeofSurgCat = ifelse(EmptyBedsTimeofSurgery == 0, 
+                                         "0",
+                                         ifelse(EmptyBedsTimeofSurgery == 1, 
+                                                "1",
+                                                ifelse(EmptyBedsTimeofSurgery > 1, 
+                                                       "2 or more", NA)))) %>%
+  #But as the study ran in UK Tuesday till Monday, and in ANZ Wednesday till Tuesday, those operated 
+  #between 00:00 and 08:00hrs will not have ICU bed numbers from the night before 
+  #(as they were not recorded).
+  mutate(CCUCapacityTimeofSurgery = 
+           replace(CCUCapacityTimeofSurgery, 
+                   which(country == "UK" & 
+                           S02StudyDay == "Tue" &
+                           S02TimeOfSurgeryStartIncision %in% c("0", "4")), NA)) %>%
+  mutate(EmptyBedsTimeofSurgery = 
+           replace(EmptyBedsTimeofSurgery, 
+                   which(country == "UK" & 
+                           S02StudyDay == "Tue" &
+                           S02TimeOfSurgeryStartIncision %in% c("0", "4")), NA)) %>%
+  mutate(EmptyBedsTimeofSurgCat = 
+           replace(EmptyBedsTimeofSurgCat, 
+                   which(country == "UK" & 
+                           S02StudyDay == "Tue" &
+                           S02TimeOfSurgeryStartIncision %in% c("0", "4")), NA)) %>%
+  mutate(CCUCapacityTimeofSurgery = 
+           replace(CCUCapacityTimeofSurgery, 
+                   which(country %in% c("Aus", "NZ") & 
+                           S02StudyDay == "Wed" &
+                           S02TimeOfSurgeryStartIncision %in% c("0", "4")), NA)) %>%
+  mutate(EmptyBedsTimeofSurgery = 
+           replace(EmptyBedsTimeofSurgery, 
+                   which(country %in% c("Aus", "NZ") & 
+                           S02StudyDay == "Wed" &
+                           S02TimeOfSurgeryStartIncision %in% c("0", "4")), NA)) %>%
+  mutate(EmptyBedsTimeofSurgCat = 
+           replace(EmptyBedsTimeofSurgCat, 
+                   which(country %in% c("Aus", "NZ")  & 
+                           S02StudyDay == "Wed" &
+                           S02TimeOfSurgeryStartIncision %in% c("0", "4")), NA)) %>%
+  mutate(CCUCapacityTimeofSurg_scaled = as.numeric(scale(CCUCapacityTimeofSurgery)),
+         EmptyBedsTimeofSurg_scaled = as.numeric(scale(EmptyBedsTimeofSurgery)))
+
+#Some data preprocessing, the same preprocessing steps as in Chapter 4
+patients_clean <- patients_clean %>% 
+  #Create a variable for whether the patients go to critical care postop
+  mutate(CCU_adm = (S07PlannedDayOfSurgeryIcuHduPacuAdmission == "Y" | 
+                      S07UnplannedDayOfSurgeryIcuHduPacuAdmission == "Y")) %>%
+  #Create an outcome variable (mortality at 30 days)
+  mutate(S07StillInHospitalPrimaryAdmissionAfterSurgery = replace(S07StillInHospitalPrimaryAdmissionAfterSurgery,
+                                                                  which(is.na(S07StillInHospitalPrimaryAdmissionAfterSurgery) &
+                                                                          S05PatientStillAliveAndInHospital == "N"), "N")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "A"), "A")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "D"), "D")) %>%
+  mutate(mort30 = (S07PostopLOS <= 30 & S07StatusAtDischarge == "D")) %>%
+  mutate(mort30 = replace(mort30, which(is.na(mort30) & S07StillInHospitalPrimaryAdmissionAfterSurgery == "Y"), FALSE)) %>%
+  #Create 60 day mortality
+  mutate(S07StillInHospitalPrimaryAdmissionAfterSurgery = replace(S07StillInHospitalPrimaryAdmissionAfterSurgery,
+                                                                  which(is.na(S07StillInHospitalPrimaryAdmissionAfterSurgery) &
+                                                                          S05PatientStillAliveAndInHospital == "N"), "N")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "A"), "A")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "D"), "D")) %>%
+  mutate(mort60 = (S07PostopLOS <= 60 & S07StatusAtDischarge == "D")) %>%
+  mutate(mort60 = replace(mort60, which(is.na(mort60) & S07StillInHospitalPrimaryAdmissionAfterSurgery == "Y"), FALSE)) %>%
+  #Winsorise postop length of stay to max 60 days
+  mutate(LOS = replace(S07PostopLOS, which(S07PostopLOS > 60), 60)) %>%
+  #Winsorise postop LOS for those still in hospital on Day 60 to 60 days
+  mutate(LOS = replace(LOS, 
+                       which(is.na(LOS) &
+                               S05PatientStillAliveAndInHospital == "Y"), 60)) %>%
+  #Decode procedure codes to obtain specialties
+  left_join(select(read.csv("../data/SNAP2_procedurelist_specialty_coded.csv"), 
+                   Code, specialty = Specialty), 
+            by = c("S02PlannedProcedure" = "Code")) %>%
+  mutate(specialty_recoded = recode(specialty, 
+                                    `Colorectal` = "GI", 
+                                    `UpperGI` = "GI", 
+                                    `Bariatric` = "GI",
+                                    `HPB` = "GI",
+                                    `Spine` = "Neuro-Spine",
+                                    `Neuro` = "Neuro-Spine",
+                                    `Urology` = "Gynaecology-Urology",
+                                    `Gynae` = "Gynaecology-Urology",
+                                    `Transplant` = "Other", 
+                                    `Endoscopic` = "Other", 
+                                    `IR` = "Other", 
+                                    `Cardiology` = "Other", 
+                                    `Opthalmic` = "Other",
+                                    `Plastics` = "Other",
+                                    `MaxFax-Dental` = "Other", 
+                                    `ENT` = "Other", 
+                                    `Endocrine` = "Other", 
+                                    `Breast` = "Other",
+                                    `Thoracic` = "Cardiothoracic")) %>%
+  mutate(S03AsaPsClass = recode(S03AsaPsClass, 
+                                `I` = "ASA I",
+                                `II` = "ASA II",
+                                `III` = "ASA III",
+                                `IV` = "ASA IV",
+                                `V` = "ASA V")) %>%
+  mutate(S02PlannedProcSeverity = recode(S02PlannedProcSeverity,
+                                         `Min` = "Minor",
+                                         `Int` = "Intermediate",
+                                         `Maj` = "Major",
+                                         `Xma` = "Xmajor", 
+                                         `Com` = "Complex")) %>%
+  mutate(S02OperativeUrgency = recode_factor(S02OperativeUrgency, 
+                                             `Ele` = "Elective",
+                                             `Exp` = "Expedited",
+                                             `U` = "Urgent",
+                                             `I` = "Immediate")) %>% 
+  mutate(Diabetes = case_when(S03Diabetes == "1" ~ "Y",
+                              S03Diabetes == "2D" ~ "Y",
+                              S03Diabetes == "2I" ~ "Y",
+                              S03Diabetes == "2O" ~ "Y",
+                              S03Diabetes == "N" ~ "N")) %>%
+  #Fix an issue where patients who are discharged before Day 7 have positive POMS morbidities
+  mutate_at(.vars = vars(S05O2Therapy:S05RegionalAnalgesia),
+            .funs = funs(replace(., which(LOS < 7 & . == "Y"), "N"))) %>%
+  mutate_at(.vars = vars(POMS:POMS_Pain),
+            .funs = funs(replace(., which(LOS < 7 & . == TRUE), FALSE))) %>%
+  mutate(PPOSSUM = arm::invlogit(pPOSSUM_mort),
+         SORT = arm::invlogit(SORT_mort),
+         SRS = arm::invlogit(SRS_mort)) %>%
+  mutate(S02PatientOrigin = replace(S02PatientOrigin,
+                                    which(S02PatientOrigin == "H" & S02PreopLOS > 0), "I"))
+
+#Some additional preprocessing specific to this chapter
+#Create a variable to indicate whether a patient was recommended for critical care
+patients_clean <- patients_clean %>% mutate(recommended =
+                                              recode(S03PatientRequiresCriticalCareAfterTheirOperation,
+                                                     `Y` = TRUE,
+                                                     `N` = FALSE))
+
+patients_clean <- patients_clean %>% 
+  mutate(S01Age = as.numeric(S01Age)) %>%
+  #Recode the clinician predictions variable
+  mutate(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days = recode_factor(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days,
+                                                                          `L1` = "<1%",
+                                                                          `L2` = "1-2.5%",
+                                                                          `L6` = "2.6-5%",
+                                                                          `L10` = "5.1-10%",
+                                                                          `L50` = "10.1-50%", 
+                                                                          `G50` = ">50%",
+                                                                          .ordered = TRUE)) %>%
+  #Create a variable for clinical_only to indicate that clinical judgement alone or ASA alone was used
+  mutate(clinical_only = ((S03MortalityEstimateClinicalJudgment == TRUE |
+                             S03MortalityEstimateASAPSScore == TRUE) &
+                            S03MortalityEstimateDukeOtherActivityStatusIndex == FALSE &
+                            S03MortalityEstimateWalkTest == FALSE &
+                            S03MortalityEstimateCardiopulmonaryExerciseTesting == FALSE &
+                            S03MortalityEstimateFrailtyAssessment == FALSE &
+                            S03MortalityEstimateSurgicalRiskScale == FALSE &
+                            S03MortalityEstimateSurgicalOutcomeRiskTool == FALSE &
+                            S03MortalityEstimateEuroSCORE == FALSE &
+                            S03MortalityEstimatePOSSUM == FALSE &
+                            S03MortalityEstimatePPOSSUM == FALSE &
+                            S03MortalityEstimateSurgeryPPOSSUM == FALSE &
+                            S03MortalityEstimateOther == FALSE)) %>%
+  #Create a mid-point value of the risk prediction range for clinical assessment
+  mutate(clin_pred = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.005,
+                            `1-2.5%` = 0.0175,
+                            `2.6-5%` = 0.0375,
+                            `5.1-10%` = 0.075,
+                            `10.1-50%` = 0.3,
+                            `>50%` = 0.75)) %>%
+  #Create a prediction variable combining both the subjective clinical assessment and SORT 
+  mutate(SORT_clin_logit = (SORT * 100 * 0.0404 + #the model requires SORT-mort prediction to be in percentage scale
+                              (S03PerioperativeTeamOfTheRiskOfDeathWithin30Days == "1-2.5%") * 1.6791 +
+                              (S03PerioperativeTeamOfTheRiskOfDeathWithin30Days == "2.6-5%") * 2.5834 +
+                              (S03PerioperativeTeamOfTheRiskOfDeathWithin30Days == "5.1-10%") * 3.2950 +
+                              (S03PerioperativeTeamOfTheRiskOfDeathWithin30Days == "10.1-50%") * 4.3563 +
+                              (S03PerioperativeTeamOfTheRiskOfDeathWithin30Days == ">50%") * 5.2336 -
+                              6.6290),
+         SORT_clin_risk = arm::invlogit(SORT_clin_logit))
+
+#Need to establish the number of cases excluded because they were already admitted to critical care prior to surgery
+patients_strobe <- patients_clean %>%
+  filter(!S02LevelOfSupport %in% c("2", "3"))
+strobe_table <- data.frame(Description = "Total patients", 
+                           N = nrow(patients_clean)) %>%
+  rbind(data.frame(Description = "Level 2/3 prior to surgery",
+                   N = nrow(patients_strobe)))
+
+#Excluded because of cardiac and thoracic great vessel surgery
+#patients_strobe <- patients_strobe %>% 
+#  filter(!(S02PlannedProcedureSubGroup %in% c("6-8", "6-10"))) %>%
+#  filter(!(S02PlannedProcedure %in% c("6-9-7-Com", "6-9-8-Com", "6-9-9-Com")))
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Cardiac/thoracic vascular surgery",
+                   N = nrow(patients_strobe)))
+
+#Need to establish the number of cases excluded because of missing data
+#First these are all the variables that go into pPOSSUM, SORT and SRS.
+
+#Missing Age
+patients_strobe <- patients_strobe %>% 
+  filter(!is.na(S01Age))
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing age",
+                   N = nrow(patients_strobe)))
+
+#Missing ASA
+patients_strobe <- patients_strobe %>%
+  filter(!is.na(S03AsaPsClass)) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing ASA-PS grade",
+                   N = nrow(patients_strobe)))
+
+#Missing NCEPOD urgency
+patients_strobe <- patients_strobe %>%
+  filter(!is.na(S02OperativeUrgency)) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing NCEPOD urgency",
+                   N = nrow(patients_strobe)))
+
+#Missing surgical procedure details
+patients_strobe <- patients_strobe %>%
+  filter(!(is.na(S02PlannedProcSeverity) | 
+             is.na(S02PlannedProcedure))) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing surgical procedure details",
+                   N = nrow(patients_strobe))) 
+
+#Missing malignancy status
+patients_strobe <- patients_strobe %>%
+  filter(!(is.na(S04Malignancy) |
+             is.na(S03PastMedicalHistoryMetastaticCancerCurrent))) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing malignancy status",
+                   N = nrow(patients_strobe))) 
+
+#Missing 30-day mortality outcome data
+patients_strobe <- patients_strobe %>% 
+  filter(!(is.na(mort30)))
+strobe_table <- rbind(strobe_table, 
+                      data.frame(Description = "Missing mortality outcome data",
+                                 N = nrow(patients_strobe)))
+
+#Missing clinical recommendation for critical care variable
+patients_strobe <- patients_strobe %>% 
+  filter(!(is.na(recommended)))
+
+strobe_table <- rbind(strobe_table, 
+                      data.frame(Description = "Missing recommendation for critical care response variable",
+                                 N = nrow(patients_strobe)))
+
+patients_complete <- patients_strobe
+
+#Subset the patients who received recommendation for critical care
+
+patients_recommended <- patients_complete %>%
+  filter(recommended == TRUE)
+```
+
+```{r PropensityCCUAdm_models1, echo=FALSE, warning=FALSE, message=FALSE, results="hide", include=TRUE, cache=TRUE}
+### Modelling for Part 1 analysis -----
+## Create a preprocessing function
+preprocess <- function(dat){
+  dat$Age_bands <- cut(as.numeric(dat$S01Age), breaks = c(0, 60, 80, Inf), labels = c("<=60", "61-80", ">80"))
+  dat$Age <- as.numeric(dat$S01Age)
+  dat$Male <- ifelse(dat$S01Gender == "M", 1, 0)
+  dat$Operative_Urgency <- factor(dat$S02OperativeUrgency, 
+                                  levels = c("Elective", "Expedited", "Urgent", "Immediate")) 
+  dat$ASA <- factor(dat$S03AsaPsClass, levels = c("ASA I", "ASA II", "ASA III", "ASA IV", "ASA V"))
+  dat$Procedure_Severity <- factor(dat$S02PlannedProcSeverity, 
+                                   levels = c("Minor", "Intermediate", "Major", "Xmajor", "Complex"))
+  dat$Procedure_Severity <- recode(dat$Procedure_Severity, 
+                                   `Minor` = "Severity = Minor",
+                                   `Intermediate` = "Severity = Intermediate",
+                                   `Major` = "Severity = Major",
+                                   `Xmajor` = "Severity = Xmajor",
+                                   `Complex` = "Severity = Complex")
+  dat$Malignancy <- ifelse(
+    (dat$S04Malignancy %in% c("PN", "MNM", "MDM") |
+       dat$S03PastMedicalHistoryMetastaticCancerCurrent == "Y"), 1, 0)
+  dat$PMHX_Cardiac <- ifelse((dat$S03PastMedicalHistoryCoronaryArteryDisease == "Y" | dat$S03PastMedicalHistoryCongestiveCardiacFailure == "Y"), 1, 0)
+  dat$PMHX_Resp <- ifelse((dat$S03PastMedicalHistoryCOPD == "Y" | dat$S03PastMedicalHistoryPulmonaryFibrosis == "Y"), 1, 0)
+  dat$PMHX_Dementia <- ifelse((dat$S03PastMedicalHistoryDementia == "Y"), 1, 0)
+  dat$PMHX_Liver <- ifelse((dat$S03PastMedicalHistoryLiverCirrhosis == "Y"), 1, 0)
+  dat$PMHX_Renal <- ifelse((dat$S03PastMedicalHistoryRenalDisease == "Y"), 1, 0)
+  dat$Origin <- factor(dat$S02PatientOrigin)
+  dat$Origin <- recode(dat$Origin, 
+                    `I` = "Already Inpatient",
+                    `H` = "Admitted from Home")
+  dat$Surgery_Start_Time <- recode(dat$S02TimeOfSurgeryStartIncision,
+                                   `8` = "Daytime Surgery",
+                                   `12` = "Daytime Surgery",
+                                   `16` = "Daytime Surgery",
+                                   `20` = "Daytime Surgery",
+                                   `0` = "Overnight Surgery",
+                                   `4` = "Overnight Surgery") %>%
+    factor()
+  dat$Recommended <- as.numeric(dat$recommended)
+  dat$CCU_adm <- as.numeric(dat$CCU_adm)
+  dat$ED <- as.numeric(dat$ed)
+  dat$TertiaryServicesAny <- as.numeric(dat$tertiaryServicesAny)
+  dat$EnhancedWard <- as.numeric(dat$enhancedWard)
+  dat$SORT_risk <- dat$SORT * 100
+  dat$SORT_clin_risk <- dat$SORT_clin_risk * 100
+  return(dat)
+}
+patients_complete <- preprocess(patients_complete)
+
+#Relabel variables
+patients_complete <- patients_complete %>%
+  var_labels(Male = "Sex = Male",
+             Operative_Urgency = "Surgical Urgency",
+             ASA = "ASA-PS Grade",
+             Procedure_Severity = "Surgical Complexity",
+             Malignancy = "Presence of Malignancy",
+             Origin = "Patient Origin",
+             Recommended = "Recommended for Critical Care",
+             CCU_adm = "Admitted to Critical Care",
+             ED = "ED present",
+             TertiaryServicesAny = "Hospital with Tertiary Services",
+             specialty_recoded = "Surgical Specialty",
+             Surgery_Start_Time = "Surgery Start Time",
+             EmptyBedsTimeofSurgery = "Empty Beds at time of Surgery",
+             EmptyBedsTimeofSurg_scaled = "Empty Beds at time of Surgery (rescaled)",
+             hospitalBeds_scaled = "Number of hospital beds (rescaled)",
+             ccuBedsProp_scaled = "Proportion of critical care beds (rescaled)",
+             genSurgBedsProp_scaled = "Number of general surgical beds (rescaled)")
+
+#Fixed-effects only recommendation model (Part 1 Model 1)
+rec_fe_model1 <- glm(Recommended ~ ns(Age, df = 3) + Male + Operative_Urgency + ASA +
+                       Procedure_Severity + Malignancy +
+                       PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+                       specialty_recoded + Origin + Surgery_Start_Time +
+                       EmptyBedsTimeofSurgery,
+                     data = patients_complete,
+                     family = binomial(link = "logit"))
+
+#rec_fe_model2 <- glm(Recommended ~ ns(Age, df = 3) + Male + Operative_Urgency + ASA +
+#                       Procedure_Severity + Malignancy +
+#                       PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+#                       specialty_recoded + Origin + Surgery_Start_Time +
+#                       EmptyBedsTimeofSurgCat,
+#                     data = patients_complete,
+#                     family = binomial(link = "logit"))
+#
+#rec_fe_model3 <- glm(Recommended ~ ns(Age, df = 3) + Male + Operative_Urgency + ASA +
+#                       Procedure_Severity + Malignancy +
+#                       PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+#                       specialty_recoded + Origin + Surgery_Start_Time +
+#                       CCUCapacityTimeofSurgery,
+#                     data = patients_complete,
+#                     family = binomial(link = "logit"))
+
+#Multilevel model (Part 1 Model 2)
+rec_ml_model1 <- glmer(Recommended ~ ns(Age, df = 3) + Male + Operative_Urgency + ASA +
+                         Procedure_Severity + Malignancy +
+                         PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+                         specialty_recoded + Origin + Surgery_Start_Time +
+                         EmptyBedsTimeofSurg_scaled +
+                         (1|SiteCode),
+                       data = patients_complete, 
+                       family = binomial(link = "logit"), 
+                       control = glmerControl(optimizer = "bobyqa"))
+
+rec_ml_model2 <- glmer(Recommended ~ ns(Age, df = 3) + Male + Operative_Urgency + ASA +
+                         Procedure_Severity + Malignancy +
+                         PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+                         specialty_recoded + Origin + Surgery_Start_Time +
+                         EmptyBedsTimeofSurg_scaled +
+                         ED + 
+                         hospitalBeds_scaled + 
+                         ccuBedsProp_scaled + 
+                         genSurgBedsProp_scaled + 
+                         TertiaryServicesAny + 
+                         EnhancedWard +
+                         (1|SiteCode),
+                       data = patients_complete, 
+                       family = binomial(link = "logit"), 
+                       control = glmerControl(optimizer = "bobyqa"))
+
+#Null models (to compare MOR)
+rec_multilevel_null <- glmer(Recommended ~ 1 + (1|SiteCode),
+                             data = patients_complete, 
+                             family = binomial(link = "logit"), 
+                             control = glmerControl(optimizer = "bobyqa"))
+
+rec_multilevel_null_country <- glmer(Recommended ~ 1 + (1|country),
+                                     data = patients_complete,
+                                     family = binomial(link = "logit"),
+                                     control = glmerControl(optimizer = "bobyqa"))
+
+#Add patient-level risk and casemix variables only
+## Linear SORT_risk
+#rec_model3 <- glmer(recommended ~ SORT_risk + (1|SiteCode),
+#                    data = patients_complete, 
+#                    family = binomial(link = "logit"), 
+#                    control = glmerControl(optimizer = "bobyqa"))
+#
+## Natural Spline SORT_risk
+#rec_model4 <- glmer(recommended ~ ns(SORT_risk, df = 5) + (1|SiteCode),
+#                    data = patients_complete, 
+#                    family = binomial(link = "logit"), 
+#                    control = glmerControl(optimizer = "bobyqa"))
+#
+## Other baseline variables
+#rec_model5 <- glmer(recommended ~ ns(SORT_risk, df = 5) + 
+#                      PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+#                      specialty_recoded + Origin + Surgery_Start_Time + 
+#                      (1|SiteCode),
+#                    data = patients_complete, 
+#                    family = binomial(link = "logit"), 
+#                    control = glmerControl(optimizer = "bobyqa"))
+#
+#Add hospital-level variables
+#rec_model6 <- glmer(recommended ~ ns(SORT_risk, df = 5) + 
+#                      PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+#                      specialty_recoded + Origin + Surgery_Start_Time + 
+#                      ed + 
+#                      hospitalBeds_scaled + 
+#                      ccuBedsProp_scaled + 
+#                      genSurgBedsProp_scaled + 
+#                      tertiaryServicesAny + 
+#                      enhancedWard +
+#                      (1|SiteCode),
+#                    data = patients_complete, 
+#                    family = binomial(link = "logit"), 
+#                    control = glmerControl(optimizer = "bobyqa"))
+#
+#Add interaction between risk and critical care bed proportion
+#rec_model7 <- glmer(recommended ~ ns(SORT_risk, df = 5) + 
+#                      PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+#                      specialty_recoded + Origin + Surgery_Start_Time + 
+#                      ed + 
+#                      hospitalBeds_scaled + 
+#                      ccuBedsProp_scaled + 
+#                      genSurgBedsProp_scaled + 
+#                      tertiaryServicesAny + 
+#                      enhancedWard  +
+#                      ns(SORT_risk, df = 5):ccuBedsProp_scaled +
+#                      (1|SiteCode),
+#                    data = patients_complete, 
+#                    family = binomial(link = "logit"), 
+#                    control = glmerControl(optimizer = "bobyqa"))
+```
+
+```{r PropensityCCUAdm_models2, echo=FALSE, warning=FALSE, message=FALSE, results="hide", include=TRUE, cache=TRUE}
+### Modelling for Part 2 analysis -----
+patients_recommended <- preprocess(patients_recommended)
+
+patients_recommended <- patients_recommended %>% 
+  mutate(Critical_events = ifelse(S04CriticalUnexpectedEventsPerioperatively == "Y", 1, 0)) %>%
+  mutate(Critical_events = tidyr::replace_na(Critical_events, 0)) %>%
+  mutate(Blood_loss = ifelse(S04BloodLoss == 1000, 1, 0)) %>%
+  mutate(Blood_loss = tidyr::replace_na(Blood_loss, 0))
+
+patients_complete <- patients_complete %>% 
+  mutate(Critical_events = ifelse(S04CriticalUnexpectedEventsPerioperatively == "Y", 1, 0)) %>%
+  mutate(Critical_events = tidyr::replace_na(Critical_events, 0)) %>%
+  mutate(Blood_loss = ifelse(S04BloodLoss == 1000, 1, 0)) %>%
+  mutate(Blood_loss = tidyr::replace_na(Blood_loss, 0))
+
+adm_fe_model1 <- glm(CCU_adm ~ ns(Age, df = 2) + Male + Operative_Urgency + ASA +
+                       Procedure_Severity + Malignancy +
+                       PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+                       specialty_recoded + Origin + Surgery_Start_Time +
+                       EmptyBedsTimeofSurgery + Critical_events + Blood_loss,
+                     data = patients_recommended,
+                     family = binomial(link = "logit"))
+
+adm_fe_model2 <- glm(CCU_adm ~ ns(Age, df = 2) + Male + Operative_Urgency + ASA +
+                       Procedure_Severity + Malignancy +
+                       PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+                       specialty_recoded + Origin + Surgery_Start_Time +
+                       EmptyBedsTimeofSurgery + Critical_events + Blood_loss,
+                     data = filter(patients_complete, recommended == FALSE),
+                     family = binomial(link = "logit"))
+
+#Null model for Recommended patients
+adm_multilevel_null <- glmer(CCU_adm ~ 1 + (1|SiteCode),
+                             data = patients_recommended, 
+                             family = binomial(link = "logit"), 
+                             control = glmerControl(optimizer = "bobyqa"))
+
+adm_multilevel_null2 <- glmer(CCU_adm ~ 1 + (1|SiteCode),
+                             data = filter(patients_complete, recommended == FALSE), 
+                             family = binomial(link = "logit"), 
+                             control = glmerControl(optimizer = "bobyqa"))
+
+#Multilevel models (Recommended Critical Care)
+adm_ml_model1 <- glmer(CCU_adm ~ ns(Age, df = 2) + Male + Operative_Urgency + ASA +
+                         Procedure_Severity + Malignancy +
+                         PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+                         specialty_recoded + Origin + Surgery_Start_Time +
+                         EmptyBedsTimeofSurg_scaled + Critical_events + Blood_loss +
+                         (1|SiteCode),
+                       data = patients_recommended,
+                       family = binomial(link = "logit"), 
+                       control = glmerControl(optimizer = "bobyqa"))
+
+adm_ml_model2 <- glmer(CCU_adm ~ ns(Age, df = 2) + Male + Operative_Urgency + ASA +
+                         Procedure_Severity + Malignancy +
+                         PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+                         specialty_recoded + Origin + Surgery_Start_Time +
+                         EmptyBedsTimeofSurg_scaled + Critical_events + Blood_loss +
+                         ED + 
+                         hospitalBeds_scaled + 
+                         ccuBedsProp_scaled + 
+                         genSurgBedsProp_scaled + 
+                         TertiaryServicesAny + 
+                         EnhancedWard +
+                         (1|SiteCode),
+                       data = patients_recommended, 
+                       family = binomial(link = "logit"), 
+                       control = glmerControl(optimizer = "bobyqa"))
+
+#Multilevel models (NOT Recommended Critical Care)
+adm_ml_model3 <- glmer(CCU_adm ~ ns(Age, df = 2) + Male + Operative_Urgency + ASA +
+                         Procedure_Severity + Malignancy +
+                         PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+                         specialty_recoded + Origin + Surgery_Start_Time +
+                         EmptyBedsTimeofSurg_scaled + Critical_events + Blood_loss +
+                         (1|SiteCode),
+                       data = filter(patients_complete, recommended == FALSE),
+                       family = binomial(link = "logit"), 
+                       control = glmerControl(optimizer = "bobyqa"))
+
+adm_ml_model4 <- glmer(CCU_adm ~ ns(Age, df = 2) + Male + Operative_Urgency + ASA +
+                         Procedure_Severity + Malignancy +
+                         PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+                         specialty_recoded + Origin + Surgery_Start_Time +
+                         EmptyBedsTimeofSurg_scaled + Critical_events + Blood_loss +
+                         ED + 
+                         hospitalBeds_scaled + 
+                         ccuBedsProp_scaled + 
+                         genSurgBedsProp_scaled + 
+                         TertiaryServicesAny + 
+                         EnhancedWard +
+                         (1|SiteCode),
+                       data = filter(patients_complete, recommended == FALSE), 
+                       family = binomial(link = "logit"), 
+                       control = glmerControl(optimizer = "bobyqa"))
+
+#Fixed-effects only
+#adm_logit1 <- glm(CCU_adm ~ SORT_risk, data = patients_recommended, family = binomial)
+#summary(adm_logit1)
+#
+#adm_logit2 <- glm(CCU_adm ~ SORT_clin_risk, data = patients_recommended, family = binomial)
+#summary(adm_logit2)
+#
+#adm_logit3 <- glm(CCU_adm ~ factor(as.character(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days)), data = patients_recommended, family = binomial)
+#summary(adm_logit3)
+
+#Null (intercept-only)
+#Model 1
+#adm_fixed_null <- glm(CCU_adm ~ 1, 
+#                      data = patients_recommended, 
+#                      family = "binomial")
+
+#adm_multilevel_null_country <- glmer(CCU_adm ~ 1 + (1|country),
+#                                     data = patients_recommended,
+#                                     family = binomial(link = "logit"),
+#                                     control = glmerControl(optimizer = "bobyqa"))
+
+#Add patient-level risk and casemix variables only
+## Linear SORT_risk
+#adm_model3 <- glmer(CCU_adm ~ SORT_risk + (1|SiteCode),
+#                    data = patients_recommended, 
+#                    family = binomial(link = "logit"), 
+#                    control = glmerControl(optimizer = "bobyqa"))
+#
+## Natural Spline SORT_risk
+#adm_model4 <- glmer(CCU_adm ~ ns(SORT_risk, df = 3) + (1|SiteCode),
+#                    data = patients_recommended, 
+#                    family = binomial(link = "logit"), 
+#                    control = glmerControl(optimizer = "bobyqa"))
+#
+## Other baseline variables
+#adm_model5 <- glmer(CCU_adm ~ ns(SORT_risk, df = 3) + 
+#                      PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+#                      specialty_recoded + Origin + Surgery_Start_Time + 
+#                      (1|SiteCode),
+#                    data = patients_recommended, 
+#                    family = binomial(link = "logit"), 
+#                    control = glmerControl(optimizer = "bobyqa"))
+#
+#adm_model6 <- glmer(CCU_adm ~ ns(SORT_risk, df = 3) + 
+#                      PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+#                      specialty_recoded + Origin + Surgery_Start_Time + 
+#                      ed + 
+#                      hospitalBeds_scaled + 
+#                      ccuBedsProp_scaled + 
+#                      genSurgBedsProp_scaled + 
+#                      tertiaryServicesAny + 
+#                      enhancedWard +
+#                      (1|SiteCode),
+#                    data = patients_recommended, 
+#                    family = binomial(link = "logit"), 
+#                    control = glmerControl(optimizer = "bobyqa"))
+#
+#Add interaction between risk and critical care bed proportion
+#adm_model7 <- glmer(CCU_adm ~ ns(SORT_risk, df = 3) + 
+#                      PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+#                      specialty_recoded + Origin + Surgery_Start_Time + 
+#                      ed + 
+#                      hospitalBeds_scaled + 
+#                      ccuBedsProp_scaled + 
+#                      genSurgBedsProp_scaled + 
+#                      tertiaryServicesAny + 
+#                      enhancedWard  +
+#                      ns(SORT_risk, df = 5):ccuBedsProp_scaled +
+#                      (1|SiteCode),
+#                    data = patients_recommended, 
+#                    family = binomial(link = "logit"), 
+#                    control = glmerControl(optimizer = "bobyqa"))
+#summary(adm_model7)
+
+#Add intraoperative events
+
+#
+#adm_model8 <- glmer(CCU_adm ~ ns(SORT_risk, df = 3) + 
+#                      PMHX_Cardiac + PMHX_Resp + PMHX_Dementia + PMHX_Liver + PMHX_Renal +
+#                      specialty_recoded + Origin + Surgery_Start_Time + 
+#                      ed + hospitalBeds_scaled + ccuBedsProp_scaled + genSurgBedsProp_scaled + 
+#                      tertiaryServicesAny + enhancedWard  +
+#                      Critical_events + Blood_loss +
+#                      (1|SiteCode),
+#                    data = patients_recommended, 
+#                    family = binomial(link = "logit"), 
+#                    control = glmerControl(optimizer = "bobyqa"))
+#
+#summary(adm_model8)
+```
+
+Critical care beds are a finite resource in constrained health services and, as described in *Chapter 3*, they account for less than 5% of all inpatient hospital beds in the UK, Australia and New Zealand. A number of steps need to occur during the perioperative period in order to secure admission to critical care: typically, patients would need to be identified by the surgical or anaesthetic team as first requiring postoperative critical care admission prompting a referral so that a bed on the critical care unit is reserved (which I will refer to henceforth as a *"perceived requirement"*), and the patient then later gets admitted once the operation finishes (referred to from this point as an *"admission"*). Therefore, identifying patients to be admitted to critical care is an important aspect of perioperative management that facilitates the allocation of this limited resource to patients who have the greatest perceived need for critical care. 
+
+Clinicians may decide that a patient should receive critical care taking into account a range of information, including the availability of critical care beds, competition for beds from critically-ill non-surgical patients, the risk of mortality facing the patient, the type of surgery the patient is undergoing, specific patient comorbidities, specific care pathways which may exist within an institution, and so on. For example, patients undergoing cardiac surgery are routinely admitted to critical care postoperatively [@smith_guidance_2016], while hepatobiliary and major gastrointestinal surgery are associated with higher rates of critical care admission [@mclean_critical_2019].
+
+As shown in *Chapter 4*, while guidelines recommend that patients with &ge;5% predicted mortality should receive critical care admission, only about a third of those high-risk patients eventually end up admitted to critical care immediately after their operations; and a proportion of the patients who do get admitted to critical care are actually patients with predicted mortality risks <5% ("low-risk" patients).
+
+A number of questions arise from this finding: 1) What are the factors which might influence clinicians to perceive a patient requires critical care admission? 2) How much does assessment of patient risk contribute to whether a patient is perceived to require critical care, compared to exogenous factors such as critical care capacity? 3) In patients who are perceived to require for critical care, what factors affect their eventual admission or non-admission? 4) Is there variation between hospitals in the likelihood of whether a patient might be perceived to require critical care, and is there variation between hospitals in the likelihood of patients then going on to be admitted to critical care? 
+
+Thus, in this chapter, I shall investigate the factors which may be associated with whether clinicians percieves a patient requires direct postoperative critical care admission post-surgery. Then, for those patients who do receive this label for **perceived requirement** for critical care admission, I shall explore the factors which may be associated with whether they later then receive critical care **admission**. I shall quantify the variation in perceived requirement for and admission to critical care between hospitals, and estimate the extent to which case-mix differences may account for any inter-hospital heterogeneity in the propensity for postoperative critical care.
+
+## Methods
+
+As in *Chapter 4* and *5*, patient-level data from the Second Sprint National Anaesthesia Project: EPIdemiology of Critical Care provision after Surgery (SNAP-2: EPICCS) were used in the analyses presented in this chapter. In addition, hospital-level variables from the Organisational Survey (presented in *Chapter 3*) were linked to the patient-level dataset to model higher-level effects which may be involved clinical decision-making around postoperative critical care admission. Full details of the data-acquisition for both the patient- and hospital-level variables are found in *Chapter 2*.
+
+### Statistical analysis
+
+Analyses using multivariable logistic regression will be presented in this chapter in two parts. 
+
+#### Part one: factors associated with recommendation for critical care
+
+In this first part of the analyses, the factors associated with receiving label denoting a clinically perceived requirement for critical care admission were modelled. The response variable for this part was the perceived requirement for critical care &mdash; Clinicians providing routine perioperative care were asked the following question, "*Does the perioperative team think that this patient requires critical care after their operation?*" This field was answered prior to the completion of surgery and required binary (yes/no) answer. Although the case record forms were completed during surgery, clinicians were asked to answer this question as though they were predicting their patients' outcomes before surgery began. The study documentation emphasised to all local investigators that the intention of the study was to assess how well the clinical team was able to anticipate the need for postoperative critical care before the patient met with any intraoperative complications. 
+
+Modelling for this part was performed on the whole cohort excluding patients already receiving critical care preoperatively, defined as those already receiving Level 2 or 3 care prior to arriving to the operating theatre suite. These cases were excluded because they would almost certainly need postoperative critical care if they were already in receipt of critical care preoperatively.
+
+Fixed-effects logistic regression models were fitted with patient-level surgical risk variables, other exogenous variables unrelated to patient risk (but which could plausibly influence the decision to recommend patients for critical care, e.g. daytime vs. overnight surgery), and measures of critical care strain (availability of critical care beds) at the time of surgery as explanatory variables.
+
+Then, mixed-effects (multilevel) logistic regression models were constructed to assess the hospital-level variables which might influence perceived critical care requirement, and to assess the inter-hospital variability in perceived requirement which might exist. For the multilevel models, variables related to structural differences between hospitals were entered into the models, and random intercepts for hospitals were used.
+
+#### Part two: factors associated with later admission to critical care
+
+In this second part analysis, the factors associated with eventual critical care admission were modelled, conditional on whether patients received a label for perceived requirement for critical care or not. The response variable for this part of the analysis was whether the patient was admitted directly to critical care following surgery. Similar to the first part, patients already receiving critical care prior to surgery were excluded. 
+
+As with part one, fixed-effects logistic regression models were fitted with surgical risk variables and other exogenous variables as explanatory variables, but additionally, other intraoperative variables were also included, e.g. estimated blood loss, and whether there were any unexpected critical events encountered during surgery. Following fixed-effects modelling, multilevel models with random intercepts for hospitals were again constructed to investigate the associations between hospital-level variables and critical care admission.
+
+#### Further detail about multilevel regression modelling used in this chapter
+
+Multilevel regression considers the fact that within the dataset, patients (level 1) are clustered within hospitals or countries (level 2). The probability of an individual patient receiving a label for requiring critical care, and the probability that a patient is then admitted to critical care after receiving such a label is made, may be statistically dependent on the hospital in which they are receiving treatment, in addition to any patient-level factors [@merlo_brief_2006]. Including a random intercept during modelling allows for correlated error terms for patients treated at the same hospital, therefore reducing bias in the estimates of other model coefficients [@gelman_data_2007; @garson_hierarchical_2013]. Null models with no explanatory variables but with a random-intercept for hospitals were fitted. The random-intercept for the null models vary by hospital and indicate the level of heterogeneity that might exist between hospitals in patients receiving label for requiring critical care and/or admission. Patient-level explanatory variables were then added to the models as identified during the earlier fixed-effects regression modelling, to account for differences in patient risk case-mix between hospitals. Following this, hospital-level variables were added to investigate the which of these were influential.
+
+The heterogeneity in perceiving a requirement for critical care and eventual critical care admission between hospitals was estimated using the Median Odds Ratio (MOR) [@merlo_brief_2006; @larsen_appropriate_2005]. The MOR quantifies the variance between hospitals (level 2 variation) by transforming the random-intercept variance into an odds ratio scale to allow for comparison with other patient- and hospital-level effects [@larsen_appropriate_2005]. This approach in quantifying variance using MOR has previously been used in modelling regional variation in mortality outcomes for patients admitted to critical care after high-risk surgery [@gillies_regional_2015; @oliver_organisational_2018].
+
+The intermediate models fitting during the analysis will be summarised, and details of the final models chosen are reported. The final chosen models were those which best-fitted the data (lowest Akaike's Information Criterion [AIC]), and which explained the most amount of interhospital variance (i.e. resulted in the greatest reduction of MOR from the null model).
+
+### Data variables
+
+Patient-level independent variables entered into the models included measures known to be associated with mortality risk, as risk is likely to influence decision-making due to the published National Confidential Enquiry into Patient Outcome and Death (NCEPOD) and Royal College of Surgeons recommendations [@findlay_knowing_2011; @lees_high-risk_2018]. As the Surgical Outcome Risk Tool (SORT) was identified as best performing risk tool identified in *Chapter 5*, its component variables were used in the modelling for this chapter [@protopapa_development_2014]. SORT includes 6 objective variables within its model: Age; ASA-PS grade; severity of procedure (as defined using AXA-PPP codes); surgical urgency (NCEPOD classifications); whether the surgery was in a particularly high-risk specialty (thoracic, GI surgery or vascular surgery); whether the patient had active malignancy. Other patient-level risk variables modelled included presence of comorbidities (the presence of chronic cardiac, respiratory, dementia, liver or renal disease), surgical start time (defined as time of surgical incision, divided into daytime [08:00hrs to 00:00hrs] vs. overnight [00:00hrs to 08:00hrs] surgery), and surgical specialty. Age was modelled using a natural cubic spline with the number of knots selected corresponding with the lowest model AIC.
+
+A variable measuring critical care strain was included in the modelling: this was defined as the number of empty beds (the number of physically empty beds with staffing available for these beds) recorded at two time-points during each day of the patient recruitment (08:00hrs and 20:00hrs). This measure was matched to the time of surgical incision for each case in the following manner:
+
+- If the patient's surgery started anytime during 08:00hrs to 20:00hrs, the critical care strain measure corresponded to the recording at the 08:00hrs timepoint that morning. 
+- If the patient’s surgery started between 20:00hrs to midnight, the critical care strain measure corresponded to the recording taken at the 20:00hrs timepoint that evening.
+- If the patient’s surgery started from midnight to 08:00hrs, the critical care strain measure corresponded to the recording taken at the 20:00hrs timepoint of the previous day.
+
+Hospital-level independent variables included: hospital size (as measured by the total number of hospital beds); critical care bed capacity (the proportion of critical care beds within total hospital beds); general surgical bed capacity (the proportion of general surgical ward beds within total hospital beds); presence of an emergency department; provision of tertiary services (any one from a list of 16 tertiary services), and provision of enhanced care ward beds. Critical care beds were defined as Level 2 or Level 3 beds according to Intensive Care Society and Faculty of Intensive Care Medicine definitions [@intensive_care_society_levels_2009; @noauthor_core_2013]. Enhanced care ward beds were defined as areas within the hospital with bed capacity to provide any subset of critical care interventions outside of the traditional Intensive Care or High-Dependency Unit (ICU/HDU) [@batchelor_critical_2017; @wong_postoperative_2018].
+
+### Missing value treatment
+
+Similar to *Chapter 5*, for patients with missing physiological values related to the risk variables used to compute P-POSSUM, normal physiological ranges were imputed. Following this imputation, cases with missing data for the remaining explanatory variables were excluded for further analysis as the proportion of cases with missing data in the remaining variables was low (`r (strobe_table[4,2] - strobe_table[9,2])/nrow(patients_clean) * 100`% of total cases) [@graham_analysis_2012]. Finally, patients with missing data for the response variable (whether they were recommended for critical care admission) were excluded.
+
+## Results
+
+After exclusion criteria were applied, `r formatC(nrow(patients_complete), big.mark = ',')` were included in part one analysis, and `r formatC(nrow(patients_recommended), big.mark = ',')` were included in part two (Figure 7-1). 
+
+```{r PropensityCCUAdm_Fig7_1_strobe, echo=FALSE, message=FALSE, warning=FALSE, fig.height=6, fig.align='center', fig.cap='Figure 7-1: Cases included and excluded from analysis.'}
+#Set up the contents for each box
+a1 <- paste0('Total available patients\nfrom ',
+             length(unique(patients_clean$SiteCode)),
+             ' hospitals\n(n = ', 
+             formatC(strobe_table$N[1], big.mark = ','), 
+             ')')
+b1 <- ''
+c1 <- paste0('Included for first part analysis\n(n = ',
+             formatC(nrow(patients_complete), big.mark = ','),
+             ')')
+d1 <- ''
+e1 <- paste0('Included for second part analysis\n(n= ',
+             formatC(nrow(patients_recommended), big.mark = ','),
+             ')')
+
+a2 <- ''
+b2 <- paste0('Total excluded (n = ',
+             formatC(strobe_table[1,2] - strobe_table[10,2], big.mark = ','),
+             '):\n\n\t',
+             'Already receiving Level 2/3 care (n = ', 
+             strobe_table[1,2] - strobe_table[2,2], 
+             ')\n\t',
+             #'Cardiac/thoracic vascular surgery (n = ', 
+             #strobe_table[2,2] - strobe_table[3,2], 
+             #')\n\t',
+             'Missing age (n = ', 
+             strobe_table[3,2] - strobe_table[4,2], 
+             ')\n\t',
+             'Missing ASA-PS (n = ', 
+             strobe_table[4,2] - strobe_table[5,2], 
+             ')\n\t',
+             'Missing NCEPOD urgency (n = ', 
+             strobe_table[5,2] - strobe_table[6,2], 
+             ')\n\t',
+             'Missing surgical procedure details (n = ', 
+             strobe_table[6,2] - strobe_table[7,2], 
+             ')\n\t',
+             'Missing malignancy status (n = ', 
+             strobe_table[7,2] - strobe_table[8,2], 
+             ')\n\t',
+             'Missing 30-day mortality outcome (n = ',
+             strobe_table[8,2] - strobe_table[9,2],
+             ')\n\t',
+             'Missing perceived requirement for 
+             critical care response variable (n = ', 
+             strobe_table[9,2] - strobe_table[10,2], 
+             ')')
+c2 <- ''
+d2 <- paste0('Patients not perceived to require critical care excluded\n(n = ',
+             formatC(nrow(patients_complete) - nrow(patients_recommended), big.mark = ','),
+             ')')
+e2 <- ''
+
+ndf <- create_node_df(
+  n = 10,
+  label = c(a1, b1, c1, d1, e1, #Column 1
+            a2, b2, c2, d2, e2), #Column 2
+  style = c('solid', 'invis', 'solid', 'invis', 'solid', #Column 1
+            'invis', 'solid', 'invis', 'solid', 'invis'), #Column 2
+  shape = c('box', 'point', 'box', 'point', 'box', #Column 1 
+            'plaintext', 'box', 'point', 'box', 'point'), #Column 2
+  width = c(3, 0.001, 3, 0.001, 3, #Column 1
+            2, 6, 0.001, 5, 0.001), #Column 2
+  height = c(1, 0.001, 1, 0.001, 1, #Column 1
+             1, 3, 0.001, 1, 0.001), #Column 2
+  fontsize = c(rep(14, 10)),
+  fontname = c(rep('Helvetica', 10)),
+  penwidth = 1.5,
+  fixedsize = 'true')
+
+edf <- create_edge_df(
+  from = c(1, 2, 3, 4, #Column 1
+           6, 7, 8, 9, #Column 2
+           2, 4 #Horizontals
+           ),
+  to = c(2, 3, 4, 5, #Column 1
+         7, 8, 9, 10, #Column 2
+         7, 9 #Horizontals
+         ),
+  arrowhead = c('none', 'normal', 'none', 'normal', #Column 1
+                'none', 'none', 'none', 'none', #Column 2
+                'normal', 'normal' #Horizontals
+                ),
+  color = c('black', 'black', 'black', 'black', #Column 1
+            '#00000000', '#00000000', '#00000000', '#00000000', #Column 2
+            'black', 'black' #Horizontals
+            ),
+  constraint = c(rep('true', 8), #Columns
+                 rep('false', 2) #Horizontals
+                 )
+)
+  
+g <- create_graph(ndf,
+                  edf,
+                  attr_theme = NULL)
+
+#render_graph(g)
+
+export_graph(g, file_name = "figures/PropensityCCUAdm_Fig7_1_strobe.png", width = 1200)
+
+export_graph(g, file_name = "figures/PropensityCCUAdm_Fig7_1_strobe.pdf")
+
+knitr::include_graphics("figures/PropensityCCUAdm_Fig7_1_strobe.png")
+```
+
+### Part 1: Recommendation for critical care
+
+A total of `r formatC(nrow(patients_complete %>% filter(recommended == TRUE)), big.mark = ",")` patients (`r nrow(patients_complete %>% filter(recommended == TRUE))/nrow(patients_complete) * 100`%) were perceived to require postoperative critical care admission by the perioperative team. The patients with a perceived requirement for critical care were older, had a higher proportion of ASA-PS III and IV grades, and had an increased incidence of comorbidities (Table 7-1). Consequently, the mean predicted mortality risk in these patients was higher than those not perceived to require postoperative critical care, as computed using SORT, the combined SORT-clinical assessment model, and by subjective clinical assessment alone.
+
+```{r PropensityCCUAdm_table7-1, echo=FALSE, message=FALSE, warning=FALSE}
+#Table 1
+table7_1_vars <- c("Male",
+                   "Age",
+                   "Operative_Urgency",
+                   "ASA",
+                   "Procedure_Severity",
+                   "specialty_recoded",
+                   "S03PastMedicalHistoryCoronaryArteryDisease",
+                   "S03PastMedicalHistoryCongestiveCardiacFailure",
+                   "S03PastMedicalHistoryMetastaticCancerCurrent",
+                   "S03PastMedicalHistoryDementia",
+                   "S03PastMedicalHistoryCOPD",
+                   "S03PastMedicalHistoryPulmonaryFibrosis",
+                   "Diabetes",
+                   "S03PastMedicalHistoryLiverCirrhosis",
+                   "S03PastMedicalHistoryRenalDisease",
+                   "SORT_risk",
+                   "SORT_clin_risk",
+                   "S03PerioperativeTeamOfTheRiskOfDeathWithin30Days")
+
+table7_1a <- CreateTableOne(vars = table7_1_vars,
+                            strata = "Recommended",
+                            data = patients_complete)
+table7_1b <- CreateTableOne(vars = table7_1_vars,
+                            data = patients_complete)
+skewed_var <- c("Age")
+
+table7_1 <- cbind(print(table7_1b, 
+                        nonnormal = skewed_var, 
+                        printToggle = FALSE,
+                        missing = TRUE,
+                        test = FALSE), 
+                  print(table7_1a, 
+                        nonnormal = skewed_var, 
+                        printToggle = FALSE,
+                        test = TRUE)) 
+table7_1 %>% pander("Table 7-1: Baseline patient demographics stratified by perceived requirement for critical care admission. For surgical specialty classifications: 'GI' includes colorectal, upper gastrointestinal tract, bariatric and hepato-pancreato-biliary surgery, and 'Other' includes solid organ transplants, ophthalmic, plastic, maxillofacial/dental, ear-nose-throat, endocrine and breast surgery, as well as interventional radiology, interventional cardiology and endoscopic procedures requiring anaesthetic support.")
+```
+
+#### Fixed-effects modelling
+
+Models were fitted sequentially with explanatory variables added based on clinically plausibility. Intermediate models were compared using AIC to assess fit. A final explanatory model was chosen that showed the lowest AIC and that explained the data well. In the final fixed-effect model, a number of factors were found to be significantly associated with patients being perceived to require critical care (Figure 7-2). 
+
+```{r PropensityCCUAdm_table7-2, echo=FALSE, message=FALSE, warning=FALSE}
+broom::tidy(rec_fe_model1) %>%
+  mutate(`Odds Ratio` = exp(estimate),
+         `95% CI Lower` = exp(confint.default(rec_fe_model1, level = 0.95))[ ,1],
+         `95% CI Upper` = exp(confint.default(rec_fe_model1, level = 0.95))[ ,2]) %>%
+  select(Variables = term, `Odds Ratio`, `95% CI Lower`, `95% CI Upper`, `p-value` = `p.value`) %>%
+  filter(!(Variables %in% c("(Intercept)", "ns(Age, df = 3)1", "ns(Age, df = 3)2", "ns(Age, df = 3)3"))) %>%
+  pander("Table 7-2: Patient-level variable associations with the likelihood of receiving a label of perceived requirement for critical care, expressed as adjusted Odds Ratios (OR) estimated with the final fixed-effects model. Patient age was modelled using a non-linear natural spline transformation, the ORs estimated for the age terms should not be interpreted directly and have therefore been omitted from the table. The effects for age can be interpreted graphically (Figure 7-3A).")
+```
+
+As patient age was modelled using a natural spline transformation and the effect of continuous explanatory variables on a response variable are not easily interpreted using odds ratios when the relationship is non-linear, the effect of age was separately demonstrated using a marginal effects plot (Figure 7-3A). In this model, the likelihood of being perceived to require critical care increased as patient age increased from 18 to approximately 70 years, before then reducing at older ages.
+
+```{r PropensityCCUAdm_Fig7_2, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=6, fig.align='center', fig.cap='Figure 7-2: Forest plot of adjusted odds ratios for factors associated with a perceived requirement for postoperative critical care in a fixed-effects logistic regression model. Increasing ASA-PS grades, higher surgical complexity and higher surgical urgency were associated with increased likelihoods of being perceived to require critical care. Compared to Gastrointestinal surgery, most other surgical specialties were less likely to result in perceived requirement for critical care, except Cardiothoracic surgery. For every empty critical care bed at the time of surgery, the Odds Ratio (OR) for perceived requirement was 1.05, adjusting for other patient risk factors. Age was modelled using a natural spline transformation and left out of the plot for this reason. PMHX = Past Medical History; Resp = Respiratory; Obs = Obstetric; Ortho = Orthopaedics; `*` p<0.05, `**` p<0.01, `***` p<0.001'}
+plot_model(rec_fe_model1, rm.terms = c("ns(Age, df = 3)1", 
+                                       "ns(Age, df = 3)2", 
+                                       "ns(Age, df = 3)3"),
+           show.p = TRUE, show.values = TRUE, value.offset = 0.4, value.size = 3,
+           order.terms = c(4, 8, 9, 10, 11, 12, 13, 14, 15, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31),
+           title = "Perceived Requirement for Postoperative Critical Care")
+```
+
+Increasing ASA-PS grade, surgical complexity and NCEPOD-defined surgical urgency were all associated with increasing likelihood of perceived requirement for critical care The greatest effects were seen for ASA-PS III (adjusted Odds Ratio [OR] = `r exp(coef(rec_fe_model1)["ASAASA III"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "ASAASA III", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "ASAASA III", level = 0.95)[2])`), ASA-PS IV (OR = `r exp(coef(rec_fe_model1)["ASAASA IV"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "ASAASA IV", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "ASAASA IV", level = 0.95)[2])`), ASA-PS V patients (OR = `r exp(coef(rec_fe_model1)["ASAASA V"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "ASAASA V", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "ASAASA V", level = 0.95)[2])`), AXA-PPP complex surgical procedures (OR = `r exp(coef(rec_fe_model1)["Procedure_SeveritySeverity = Complex"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "Procedure_SeveritySeverity = Complex", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "Procedure_SeveritySeverity = Complex", level = 0.95)[2])`), and NCEPOD-immediate urgency (OR = `r exp(coef(rec_fe_model1)["Operative_UrgencyImmediate"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "Operative_UrgencyImmediate", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "Operative_UrgencyImmediate", level = 0.95)[2])`).
+
+Compared to gastrointestinal surgery, patients undergoing cardiothoracic surgery were more likely to be perceived to require critical care (OR = `r exp(coef(rec_fe_model1)["specialty_recodedCardiothoracic"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "specialty_recodedCardiothoracic", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "specialty_recodedCardiothoracic", level = 0.95)[2])`), while those undergoing procedures in other specialties were less likely to be perceived to require critical care, even after adjustment for other patient risk factors. Male patients were more likely to be perceived to require critical care after accounting for other confounders (OR = `r exp(coef(rec_fe_model1)["Male"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "Male", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "Male", level = 0.95)[2])`).
+
+Patients with active malignancy (OR = `r exp(coef(rec_fe_model1)["Malignancy"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "Malignancy", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "Malignancy", level = 0.95)[2])`), comorbid cardiac (OR = `r exp(coef(rec_fe_model1)["PMHX_Cardiac"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "PMHX_Cardiac", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "PMHX_Cardiac", level = 0.95)[2])`) and respiratory disease (OR = `r exp(coef(rec_fe_model1)["PMHX_Resp"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "PMHX_Resp", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "PMHX_Resp", level = 0.95)[2])`) were more likely to have a perceived requirement for critical care. In contrast, patients with comorbid dementia were less likely to be perceived to require postoperative critical care (OR = `r exp(coef(rec_fe_model1)["PMHX_Dementia"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "PMHX_Dementia", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "PMHX_Dementia", level = 0.95)[2])`)
+
+Patients who were already inpatients at the time of surgery (as opposed to admitted on the day of surgery) were more likely to be perceived to require critical care (OR = `r exp(coef(rec_fe_model1)["OriginAlready Inpatient"])`, 95% CI: `r exp(confint.default(rec_fe_model1, "OriginAlready Inpatient", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "OriginAlready Inpatient", level = 0.95)[2])`).
+
+Although the surgical start time (daytime vs. overnight) was not significantly associated with perceived requirement for critical care, the availability of critical care beds around the time of surgical start (defined as the number of empty critical care beds) was associated with increased likelihood of being perceived to require critical care (OR = `r exp(coef(rec_fe_model1)["EmptyBedsTimeofSurgery"])` per empty bed, 95% CI: `r exp(confint.default(rec_fe_model1, "EmptyBedsTimeofSurgery", level = 0.95)[1])` to `r exp(confint.default(rec_fe_model1, "EmptyBedsTimeofSurgery", level = 0.95)[2])`). This effect was visualised graphically in Figure 7-3B.
+
+```{r PropensityCCUAdm_Fig7_3, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE, fig.width=8, fig.height=8, fig.align='center', fig.cap='Figure 7-3: Plots of the marginal probabilities of perceived requirement for admission to postoperative critical care against patient age (A), and against the number of empty critical care beds around the time of surgery (B) in the fixed effects model. Similar marginal effects plots are also shown for the final multilevel model, again for age (C), and for grand-mean centered empty critical care beds (D). For these marginal effects plots, other categorical variables are held constant at their reference value, while other continuous variables are held constant at their mean values.'}
+predictions_age_fe <- ggeffects::ggpredict(rec_fe_model1, 
+                                        terms = "Age [all]", 
+                                        type = "fe")
+
+predictions_emptyBeds_fe <- ggeffects::ggpredict(rec_fe_model1, 
+                                              terms = "EmptyBedsTimeofSurgery [all]", 
+                                              type = "fe")
+
+predictions_age_ml <- ggeffects::ggpredict(rec_ml_model2, 
+                                        terms = "Age [all]", 
+                                        type = "fe")
+
+predictions_emptyBeds_ml <- ggeffects::ggpredict(rec_ml_model2, 
+                                              terms = "EmptyBedsTimeofSurg_scaled [all]", 
+                                              type = "fe")
+
+#predictions_specialty <- ggeffects::ggpredict(rec_fe_model1, terms = c("S01Age [all]", 
+#                                                                    "specialty_recoded"),
+#                                              type = "fe")
+
+cowplot::plot_grid(
+  plot(predictions_age_fe) +
+    scale_y_continuous(labels = scales::percent_format()) +
+    labs(x = "Patient age (years)",
+         y = "Probabilty of perceived\nrequirement for critical care", title = "") +
+    theme_classic(),
+  
+  plot(predictions_emptyBeds_fe) +
+    scale_y_continuous(labels = scales::percent_format()) +
+    labs(x = "Empty critical care beds around the time of surgery (n)",
+         y = "Probabilty of perceived\nrequirement for critical care", title = "") +
+    theme_classic(),
+  
+    plot(predictions_age_ml) +
+    scale_y_continuous(labels = scales::percent_format()) +
+    labs(x = "Patient age (years)",
+         y = "Probabilty of perceived\nrequirement for critical care", title = "") +
+    theme_classic(),
+  
+  plot(predictions_emptyBeds_ml) +
+    scale_y_continuous(labels = scales::percent_format()) +
+    labs(x = "Empty critical care beds (standardised units)",
+         y = "Probabilty of perceived\nrequirement for critical care", title = "") +
+    theme_classic(),
+  
+  #ggplot(predictions_emptyBeds, aes(x = x, y = predicted, colour = group)) +
+  #  geom_line() + 
+  #  theme(legend.position = "right") + 
+  #  scale_colour_discrete(name = "Proportion of\nCritical Care Beds", 
+  #                        labels = c("Bottom Quartile", "Median", "Top Quartile")) +
+  #  scale_y_continuous(labels = scales::percent_format(), limits = c(0, 1)) +
+  #  scale_x_continuous(labels = scales::unit_format(unit = "%", sep = "")) +
+  #  labs(x = "Number of empty critical care beds",
+  #       y = "Probabilty of\nrecommendation") +
+  #  theme_classic(),
+  
+  #ggplot(predictions_specialty, aes(x = x, y = predicted, colour = group)) +
+  #  geom_line() + 
+  #  theme(legend.position = "right") +
+  #  scale_colour_brewer(palette = "Dark2") +
+  #  scale_y_continuous(labels = scales::percent_format()) +
+  #  scale_x_continuous(labels = scales::unit_format(unit = "%", sep = "")) +
+  #  labs(col = "Specialty") +
+  #  labs(x = "Age",
+  #       y = "Probabilty of\nrecommendation") +
+  #  theme_classic(),
+  
+  labels = c("A", "B", "C", "D"),
+  cols = 2
+)
+```
+
+#### Mixed-effects (Multilevel) modelling
+
+A number of multilevel models were fitted (Table 7-3): a null model with a random intercept for hospitals but no explanatory variables (Model A); a model with a random intercept for hospitals and patient-level explanatory variables identified in fixed-effects modelling described in the previous section (Model B); and a model with a random intercept for hospitals, patient-level and hospital-level explanatory variables (Model C).
+
+The model with a random intercept for hospitals (Model A) demonstrated that there was substantial inter-hospital variation in the perceived requirement of patients for postoperative critical care (Median Odds Ratio [MOR] = `r MOR(as.data.frame(VarCorr(rec_multilevel_null))[1, "vcov"])`). The addition of patient-level fixed-effects variables (Model B) reduced the MOR to `r MOR(as.data.frame(VarCorr(rec_ml_model1))[1, "vcov"], digits = 3)`. In this model, adjusting for differences in case-mix between hospitals using the fixed-effects identified in the previous section appeared to explain some of the inter-hospital variation in perceived requirement for critical care.
+
+| Model name | Terms | Description | MOR | AIC | Interpretation |
+|:-----------|-------|-------------|:---:|:---:|----------------|
+| Model A    | No fixed terms + random intercept for hospitals only | Assesses whether there is clustering in the data by sites, i.e. is there variation in the likelihood of being perceived to require critical care depending on the hospital where surgery is conducted. | `r MOR(as.data.frame(VarCorr(rec_multilevel_null))[1, "vcov"])` | `r AIC(rec_multilevel_null)` | The variance of the random intercept for hospitals when transformed into an Odds Ratio scale was `r MOR(as.data.frame(VarCorr(rec_multilevel_null))[1, "vcov"])`, suggesting there was substantial inter-hospital variation in the likelihood for perceived requirement for postoperative critical care.|
+| Model B    | Patient-level fixed-effects explanatory variables + random intercept | Adjusts for differences in patient case-mix that might account for differences between hospitals in the likelihood of being being perceived to require critical care. | `r MOR(as.data.frame(VarCorr(rec_ml_model1))[1, "vcov"])` | `r AIC(rec_ml_model1)` | The addition of patient-level variables improved the model fit significantly compared to Model A, and explained some of the inter-hospital variation as the MOR reduced to `r MOR(as.data.frame(VarCorr(rec_ml_model1))[1, "vcov"])`.|
+| Model C    | Patient-level and hospital-level fixed-effects explanatory variables + random intercept | Estimates the hospital-level effects which are associated with the likelihood of being referred to critical care. | `r MOR(as.data.frame(VarCorr(rec_ml_model2))[1, "vcov"])` | `r AIC(rec_ml_model2)` | The addition of hospital-level variables improved the model fit significantly compared to Model B, and explained some of the inter-hospital variation as it reduced MOR.|
+
+  Table: Table 7-3: Summary of the multilevel logistic regression models fitted in the first part of analysis in this chapter. MOR = Median Odds Ratio; AIC = Akaike's Information Criterion.
+
+Adding hospital-level fixed-effects variables to the model (Model C), further reduced the MOR to `r MOR(as.data.frame(VarCorr(rec_ml_model2))[1, "vcov"])`, suggesting that hospital-level differences explained a further proportion of the inter-hospital variation, above and beyond patient case-mix differences. However, a substantial amount of inter-hospital variation remained unexplained by the model. The MOR of `r MOR(as.data.frame(VarCorr(rec_ml_model2))[1, "vcov"], digits = 3)` was comparable to the adjusted ORs for comorbid liver cirrhosis (OR = `r exp(fixef(rec_ml_model2)["PMHX_Liver"])`) or comorbid respiratory disease (OR = `r exp(fixef(rec_ml_model2)["PMHX_Resp"])`).
+
+Patients were more likely to be perceived to require critical care if they underwent surgery in hospitals with higher proportions of critical care beds (adjusted OR = `r exp(fixef(rec_ml_model2)["ccuBedsProp_scaled"])`, 95% CI: `r exp(confint(rec_ml_model2, parm = "beta_", method = "Wald")["ccuBedsProp_scaled", 1])` to `r exp(confint(rec_ml_model2, parm = "beta_", method = "Wald")["ccuBedsProp_scaled", 2])` for every standard deviation increase in percentage of critical care beds). An interaction between predicted mortality risk and critical care bed proportions was tested during model construction but this was not found to be significant and therefore not retained in the final model.
+
+Patients undergoing surgery in hospitals with an emergency department were approximately half as likely to have a perceived requirement for critical care (adjusted OR = `r exp(fixef(rec_ml_model2)["ED"])`, 95% CI: `r exp(confint(rec_ml_model2, parm = "beta_", method = "Wald")["ED", 1])` to `r exp(confint(rec_ml_model2, parm = "beta_", method = "Wald")["ED", 2])`) than patients operated on in hospitals without an emergency department.
+
+The following hospital-level factors were not significantly associated with whether patients received a perceived requirement for critical care: whether surgery was performed in hospitals with high-acuity beds (as described in *Chapter 3*), the size of hospital (as measured by number of hospital beds), proportion of general surgical ward beds, tertiary status of the hospital and whether the patient was operated on overnight. The final mixed-effects model (Model C), including both fixed- and random-effects is visualised in a Forest Plot (Figure 7-4)
+
+```{r PropensityCCUAdm_Fig7_4, echo=FALSE, fig.height=8, fig.width=8, warning=FALSE, , message=FALSE, cache=TRUE, fig.align='center', fig.cap='Figure 7-4: Forest plot of adjusted odds ratios for factors associated with a perceived requirement for postoperative critical care in the final mixed-effects logistic regression model. Similar to the fixed-effects only model, increasing ASA-PS grades, higher surgical complexity and higher surgical urgency were associated with increased likelihoods of perceived requirement for critical care. Again, compared to Gastrointestinal surgery, most other surgical specialties were also less likely to result in perceived requirement for critical care, except Cardiothoracic surgery. For every empty critical care bed at the time of surgery, the Odds Ratio (OR) for perceived requirement was 1.09, adjusting for other patient risk factors and hospital-level factors. Hospitals with a higher percentage of critical care beds as a proportion of total hospital beds were more likely to have patients perceived to require critical care (adjusted OR = 1.12). Hospitals with Emergency Departments (EDs) were almost half as likely to have patients perceived to require critical care. Age was modelled using a natural spline transformation and left out of the plot for this reason. PMHX = Past Medical History; Resp = Respiratory; Obs = Obstetric; Ortho = Orthopaedics; `*` p<0.05, `**` p<0.01, `***` p<0.001.'}
+plot_model(rec_ml_model2, rm.terms = c("ns(Age, df = 3)1", 
+                                       "ns(Age, df = 3)2", 
+                                       "ns(Age, df = 3)3"), 
+           show.p = TRUE, show.values = TRUE, value.offset = 0.4, value.size = 3,
+           order.terms = c(4, 8, 9, 10, 11, 12, 13, 14, 15, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 32, 36, 37),
+           title = "Perceived Requirement for Postoperative Critical Care")
+```
+
+The relationship between age and perceived requirement for critical care remained the same in the multilevel model (Figure 7-3C), the likelihood of receiving a recommendation for critical care again increased as patient age increased from 18 to approximately 70 years, then reducing at older ages.
+
+### Part 2: Eventual admission to critical care
+
+Of the `r formatC(nrow(patients_complete %>% filter(recommended == TRUE)), big.mark = ",")` patients who had a perceived requirement for postoperative critical care admission, `r formatC(nrow(patients_complete %>% filter(recommended == TRUE & CCU_adm == TRUE)), big.mark = ",")` (`r nrow(patients_complete %>% filter(recommended == TRUE & CCU_adm == TRUE))/nrow(patients_complete %>% filter(recommended == TRUE)) * 100`%) were later admitted to critical care immediately following surgery. The baseline characteristics of this patient subgroup are summarised in Table 7-4. In contrast, of the `r formatC(nrow(patients_complete %>% filter(recommended == FALSE)), big.mark = ",")` patients who were not perceived to require critical care admission, only a small number `r formatC(nrow(patients_complete %>% filter(recommended == FALSE & CCU_adm == TRUE)), big.mark = ",")` (`r nrow(patients_complete %>% filter(recommended == FALSE & CCU_adm == TRUE))/nrow(patients_complete %>% filter(recommended == FALSE)) * 100`%) were later admitted to critical care immediately following surgery.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=4, fig.align='center'}
+library(ggalluvial)
+
+patients_complete %>% group_by(Recommended, Admitted = CCU_adm) %>% 
+  tally() %>% 
+  drop_na() %>%
+  ungroup() %>%
+  mutate(Recommended = as.logical(Recommended),
+         Admitted = as.logical(Admitted)) %>%
+  ggplot(data = ., aes(y = n, axis1 = Recommended, axis2 = Admitted)) +
+  geom_alluvium(aes(fill = Recommended), width = 1/12) +
+  geom_stratum(width = 1/12, color = "grey") +
+  geom_label(stat = "stratum", label.strata = TRUE) +
+  scale_x_discrete(limits = c("Recommended", "Admitted"), expand = c(.05, .05)) +
+  scale_fill_brewer(type = "qual", palette = "Set1") +
+  labs(y = "Frequency (n)") +
+  theme(legend.position = "bottom")
+
+```
+
+Clinicians were asked during surgery why patients were perceived to require critical care, and `r prop.table(patients_recommended$S03ReasonReferredForPostoperativeCriticalCare %>% table(useNA = "ifany"))["HR"] * 100`% cited that patients were high-risk based on preoperative risk stratification, while `r prop.table(patients_recommended$S03ReasonReferredForPostoperativeCriticalCare %>% table(useNA = "ifany"))["R"] * 100`% cited that critical care admission was routine for the type of operation the patient was undergoing. In the remainder, free-text responses were analysed and categorised. Other reasons cited for referral to critical care included anticipated intraoperative bleeding or haemodynamic instability (`r nrow(Reasons_for_referral %>% filter(Bleeding_Haemodynamic == 1))/nrow(patients_recommended) * 100`%), patient frailty or multimorbidity (`r nrow(Reasons_for_referral %>% filter(Multimorbidity_Frailty == 1))/nrow(patients_recommended) * 100`%), anticipated increased postoperative monitoring needs (`r nrow(Reasons_for_referral %>% filter(Monitoring == 1))/nrow(patients_recommended) * 100`%), anticipated postoperative airway or respiratory complications (`r nrow(Reasons_for_referral %>% filter(Airway == 1))/nrow(patients_recommended) * 100`%), or high procedural complexity (`r nrow(Reasons_for_referral %>% filter(Surgical_complexity == 1))/nrow(patients_recommended) * 100`%).
+
+Unexpected intraoperative events or complications were reported in `r nrow(patients_recommended %>% filter(S04CriticalUnexpectedEventsPerioperatively == "Y"))/nrow(patients_recommended) * 100`% of the patients receiving a recommendation for critical care, and a small number of these (n = `r nrow(Reasons_for_referral %>% filter(Intraop_complications == 1))`) were cited as free-text reasons for critical care referral.
+
+```{r PropensityCCUAdm_table7-4, echo=FALSE, message=FALSE, warning=FALSE}
+#Table 1
+table7_4_vars <- c("Male",
+                   "Age",
+                   "Operative_Urgency",
+                   "ASA",
+                   "Procedure_Severity",
+                   "specialty_recoded",
+                   "S03PastMedicalHistoryCoronaryArteryDisease",
+                   "S03PastMedicalHistoryCongestiveCardiacFailure",
+                   "S03PastMedicalHistoryMetastaticCancerCurrent",
+                   "S03PastMedicalHistoryDementia",
+                   "S03PastMedicalHistoryCOPD",
+                   "S03PastMedicalHistoryPulmonaryFibrosis",
+                   "Diabetes",
+                   "S03PastMedicalHistoryLiverCirrhosis",
+                   "S03PastMedicalHistoryRenalDisease",
+                   "SORT",
+                   "SORT_clin_risk",
+                   "S03PerioperativeTeamOfTheRiskOfDeathWithin30Days")
+
+table7_4a <- CreateTableOne(vars = table7_4_vars,
+                            strata = "CCU_adm",
+                            data = patients_recommended)
+table7_4b <- CreateTableOne(vars = table7_4_vars,
+                            data = patients_recommended)
+skewed_var <- c("Age")
+
+table7_4 <- cbind(print(table7_4b, 
+                        nonnormal = skewed_var, 
+                        printToggle = FALSE,
+                        missing = TRUE,
+                        test = FALSE), 
+                  print(table7_4a, 
+                        nonnormal = skewed_var, 
+                        printToggle = FALSE,
+                        test = TRUE)) 
+table7_4 %>% pander("Table 7-4: Baseline demographics for patients who were perceived to require critical care admission included in the second analysis, stratified by whether they actually then were admitted to critical care after surgery. For surgical specialty classifications: 'GI' includes colorectal, upper gastrointestinal tract, bariatric and hepato-pancreato-biliary surgery, and 'Other' includes solid organ transplants, ophthalmic, plastic, maxillofacial/dental, ear-nose-throat, endocrine and breast surgery, as well as interventional radiology, interventional cardiology and endoscopic procedures requiring anaesthetic support.")
+```
+
+Patients who were not perceived to require critical care formed a group of patients within the cohort, and the characteristics of these patients are summarised in Table 7-5, stratified by whether they were actually later admitted to critical care. 
+
+```{r PropensityCCUAdm_table7-5, echo=FALSE, message=FALSE, warning=FALSE}
+table7_5a <- CreateTableOne(vars = table7_4_vars,
+                            strata = "CCU_adm",
+                            data = filter(patients_complete,recommended == FALSE))
+table7_5b <- CreateTableOne(vars = table7_4_vars,
+                            data = filter(patients_complete,recommended == FALSE))
+skewed_var <- c("Age")
+
+table7_5 <- cbind(print(table7_5b, 
+                        nonnormal = skewed_var, 
+                        printToggle = FALSE,
+                        missing = TRUE,
+                        test = FALSE), 
+                  print(table7_5a, 
+                        nonnormal = skewed_var, 
+                        printToggle = FALSE,
+                        test = TRUE)) 
+table7_5 %>% pander("Table 7-5: Baseline demographics for patients did not have a perceived requirement for critical care admission, stratified by whether they were later admitted to critical care after surgery. For surgical specialty classifications: 'GI' includes colorectal, upper gastrointestinal tract, bariatric and hepato-pancreato-biliary surgery, and 'Other' includes solid organ transplants, ophthalmic, plastic, maxillofacial/dental, ear-nose-throat, endocrine and breast surgery, as well as interventional radiology, interventional cardiology and endoscopic procedures requiring anaesthetic support.")
+```
+
+#### Fixed-effects modelling
+
+Similar to the part one analysis, fixed-effects models were fitted sequentially with explanatory variables added based on clinically plausibility. The same models were fitted separately on the subgroups of patients perceived to require and perceived not to require critical care on the response variable of immediate critical care admission (Figure 7-5). In addition to the baseline preoperative patient-level variables modelled in part one, variables accounting for unexpected intraoperative critical events and large volume haemorrhage were added to the models in this section.
+
+```{r PropensityCCUAdm_Fig7_5, echo=FALSE, fig.height=8, fig.width=8, warning=FALSE, , message=FALSE, cache=TRUE, fig.align='center', fig.cap='Figure 7-5: Forest plots of adjusted odds ratios for factors associated with admission to critical care in both patients who were perceived to require and perceived not to require critical care in the fixed-effects logistic regression models. For ease of interpretation, due to the large number of variables, variables with no significant effects for either subgroup of patients have been removed from the plot. Age was modelled using a natural spline transformation and left out of the plot for this reason. PMHX = Past Medical History; Obs = Obstetric; Ortho = Orthopaedics; `*` p<0.05, `**` p<0.01, `***` p<0.001.'}
+plot_models(adm_fe_model1, adm_fe_model2,
+            m.labels = c("Requiring Critical Care", "Not Requiring"),
+            rm.terms = c("ns(Age, df = 2)1", 
+                         "ns(Age, df = 2)2",
+                         "Procedure_SeveritySeverity = Xmajor",
+                         "Procedure_SeveritySeverity = Major",
+                         "Procedure_SeveritySeverity = Intermediate",
+                         "PMHX_Resp",
+                         "PMHX_Renal",
+                         "PMHX_Cardiac",
+                         "Operative_UrgencyImmediate",
+                         "ASAASA V"),
+            grid = TRUE,
+            show.p = TRUE, show.values = TRUE, spacing = 0.25, show.legend = FALSE)
+```
+
+Patients experiencing unexpected intraoperative critical events were more likely to be admitted to critical care, both in patients with a perceived requirement for critical care (adjusted OR = `r exp(coef(adm_fe_model1)["Critical_events"])`, 95% CI: `r exp(confint.default(adm_fe_model1, "Critical_events", level = 0.95)[1])` to `r exp(confint.default(adm_fe_model1, "Critical_events", level = 0.95)[2])`) and in patients who were perceived not to require critical care (OR = `r exp(coef(adm_fe_model2)["Critical_events"])`, 95% CI: `r exp(confint.default(adm_fe_model2, "Critical_events", level = 0.95)[1])` to `r exp(confint.default(adm_fe_model2, "Critical_events", level = 0.95)[2])`). Similarly, large volume intraoperative blood loss of greater than 1L was associated with critical care admission (OR for those with perceived requirement for critical care = `r exp(coef(adm_fe_model1)["Blood_loss"])`, 95% CI: `r exp(confint.default(adm_fe_model1, "Blood_loss", level = 0.95)[1])` to `r exp(confint.default(adm_fe_model1, "Blood_loss", level = 0.95)[2])`; OR for those percieved not requiring critical care = `r exp(coef(adm_fe_model2)["Blood_loss"])`, 95% CI: `r exp(confint.default(adm_fe_model2, "Blood_loss", level = 0.95)[1])` to `r exp(confint.default(adm_fe_model2, "Blood_loss", level = 0.95)[2])`). The presence of comorbid liver was associated with increased likelihood of critical care admission, in patients perceived to require critical care. While comorbid dementia was again associated with reduced likelihood of admission to critical care in patients with perceived requirement for critical care. The patterns of association between surgical specialty reflected the findings in part one, with obstetric, orthopaedic, and gynaecology/urology procedures less likely to be admitted to critical care, regardless of whether patients had a perceived requirement for critical care or not. 
+
+The patients who were later admitted despite not being perceived to require critical care were more likely to be male, more likely to be ASA-PS III or higher, and more likely to be undergoing Xmajor or Complex surgery. Age was again modelled with a natural spline transformation and better appreciated with a marginal plot (Figure 7-6).
+
+Patients with a perceived requirement for critical care were increasingly likely to be admitted as more empty critical care beds were available around the time of surgery.
+
+```{r PropensityCCUAdm_Fig7_6, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE, fig.width=6, fig.height=8, fig.align='center', fig.cap='Figure 7-6: Plots of the marginal effects age on admission to postoperative critical care in patients who were perceived to require critical care (A), and in patients who were perceived to not require critical care recommendation (B). For these marginal effects plots, other categorical variables are held constant at their reference value, while other continuous variables are held constant at their mean values.'}
+predictions_age_rec <- ggeffects::ggpredict(adm_fe_model1, 
+                                            terms = "Age [all]", 
+                                            type = "fe")
+
+predictions_age_not_rec <- ggeffects::ggpredict(adm_fe_model2, 
+                                                terms = "Age [all]", 
+                                                type = "fe")
+
+cowplot::plot_grid(
+  plot(predictions_age_rec) +
+    scale_y_continuous(labels = scales::percent_format()) +
+    labs(x = "Patient age (years)",
+         y = "Probabilty of\nadmission", title = "") +
+    theme_classic(),
+  
+  plot(predictions_age_not_rec) +
+    scale_y_continuous(labels = scales::percent_format()) +
+    labs(x = "Patient age (years)",
+         y = "Probabilty of\nadmission", title = "") +
+    theme_classic(),
+  
+  labels = c("A", "B"),
+  cols = 1
+)
+```
+
+#### Mixed-effects (Multilevel) modelling
+
+A number of multilevel models were again constructed (Table 7-6) to investigate the hospital-level factors which influence eventual critical care admission within the subsets of patients perceived to require (Models D to F) and perceived not to require critical care (Models G to I), and quantify the inter-hospital variability in critical care admission.
+
+| Model name | Terms | Dataset | Description | MOR | AIC | Interpretation |
+|:-----------|-------|---------|-------------|:---:|:---:|----------------|
+| Model D    | No fixed terms + random intercept for hospitals only | Patients with **perceived requirement** for critical care | Assesses whether there is clustering in the data by sites, i.e. is there inter-hospital variation in the likelihood of being admitted to in patients perceived to require critical care. | `r MOR(as.data.frame(VarCorr(adm_multilevel_null))[1, "vcov"])` | `r AIC(adm_multilevel_null)` | The variance of the random intercept for hospitals when transformed into an Odds Ratio scale was `r MOR(as.data.frame(VarCorr(adm_multilevel_null))[1, "vcov"])`, suggesting there was substantial inter-hospital variation in the likelihood for patients being admitted postoperative critical care.|
+| Model E    | Patient-level fixed-effects explanatory variables + random intercept | Patients with **perceived requirement** for critical care | Adjusts for differences in patient case-mix that might account for differences between hospitals in the likelihood of being admitted to critical care after having a perceived requirement for critical care. | `r MOR(as.data.frame(VarCorr(adm_ml_model1))[1, "vcov"])` | `r AIC(adm_ml_model1)` | Inroduction of patient-level variables improved model fit (reduced AIC compared to Model D) but did not explain any of the inter-hospital variation in admissions to critical care after patients were perceived to require critical care (the MOR was not reduced compared to Model D). |
+| **Model F** | Patient-level and hospital-level fixed-effects explanatory variables + random intercept | Patients with **perceived requirement** for critical care | Estimates the hospital-level effects which are associated with the likelihood of being admitted to critical care. | `r MOR(as.data.frame(VarCorr(adm_ml_model2))[1, "vcov"])` | `r AIC(adm_ml_model2)` | Inroduction of hospital-level variables did not explain any of the inter-hospital variation in admissions to critical care after patients were perceived to require critical care, nor improve the model fit compared to Model E. |
+| Model G    | No fixed terms + random intercept for hospitals only | Patients **perceived not to require** critical care | Assesses whether there is clustering in the data by sites, i.e. is there inter-hospital variation in the likelihood of being admitted despite not being perceived to require critical care. | `r MOR(as.data.frame(VarCorr(adm_multilevel_null2))[1, "vcov"])` | `r AIC(adm_multilevel_null2)` | The variance of the random intercept for hospitals when transformed into an Odds Ratio scale was `r MOR(as.data.frame(VarCorr(adm_multilevel_null2))[1, "vcov"])`, suggesting there was substantial inter-hospital variation in the likelihood for patients being admitted postoperative critical care.|
+| Model H    | Patient-level fixed-effects explanatory variables + random intercept | Patients **perceived not to require** critical care | Adjusts for differences in patient case-mix that might account for differences between hospitals in the likelihood of being admitted to critical care after being perceived to require critical care. | `r MOR(as.data.frame(VarCorr(adm_ml_model3))[1, "vcov"])` | `r AIC(adm_ml_model3)` | Inroduction of patient-level variables improved model fit (reduced AIC compared to Model G) but did not explain any of the inter-hospital variation in admissions to critical care after patients were perceived not to require (the MOR was not reduced compared to Model D). |
+| **Model I** | Patient-level and hospital-level fixed-effects explanatory variables + random intercept | Patients **perceived not to require** critical care | Estimates the hospital-level effects which are associated with the likelihood of being admitted to critical care. | `r MOR(as.data.frame(VarCorr(adm_ml_model4))[1, "vcov"])` | `r AIC(adm_ml_model4)` | Inroduction of hospital-level variables did not explain any of the inter-hospital variation in admissions to critical care after patients were perceived not to require critical care, nor improve the model fit compared to Model H. |
+
+  Table: Table 7-6: Summary of the multilevel logistic regression models fitted in the second part of analysis in this chapter. Final model chosen is in **bold**. MOR = Median Odds Ratio; AIC = Akaike's Information Criterion.
+
+In the final chosen models (Figure 7-7), critical care bed availability (measured by empty beds at the time of surgery and the number of critical care beds as a proportion of total hospital beds) were not significantly associated with the likelihood of critical care admission, both in patients perceived to require and perceived not to require critical care. Patients operated on in hospitals with emergency departments were again less likely to be admitted in those perceived not to require critical care (adjusted OR = `r exp(fixef(adm_ml_model4)["ED"])`, 95% CI: `r exp(confint(adm_ml_model4, parm = "beta_", method = "Wald")["ED", 1])` to `r exp(confint(adm_ml_model4, parm = "beta_", method = "Wald")["ED", 2])`).
+
+```{r PropensityCCUAdm_Fig7_7, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=10, fig.align='center', fig.cap='Figure 7-6: Forest plots of adjusted odds ratios for factors associated with admission to postoperative critical care in the final multilevel logistic regression models. For ease of interpretation, due to the large number of variables modelled, variables with no significant effects for either subgroup of patients have been removed from the plot. Age was modelled using a natural spline transformation and left out of the plot for this reason. PMHX = Past Medical History; Obs = Obstetric; Ortho = Orthopaedics; `*` p<0.05, `**` p<0.01, `***` p<0.001.'}
+plot_models(adm_ml_model2, adm_ml_model4,
+            m.labels = c("Requiring Critical Care", "Not Requiring"),
+            rm.terms = c("ns(Age, df = 2)1", 
+                         "ns(Age, df = 2)2",
+                         "TertiaryServicesAny",
+                         "Surgery_Start_TimeDaytime Surgery",
+                         "specialty_recodedCardiothoracic",
+                         "Procedure_SeveritySeverity = Major",
+                         "Procedure_SeveritySeverity = Intermediate",
+                         "PMHX_Resp",
+                         "PMHX_Renal",
+                         "PMHX_Cardiac",
+                         "Operative_UrgencyImmediate",
+                         "hospitalBeds_scaled",
+                         "genSurgBedsProp_scaled",
+                         "EnhancedWard",
+                         "EmptyBedsTimeofSurg_scaled",
+                         "ccuBedsProp_scaled",
+                         "ASAASA V"),
+            grid = TRUE,
+            show.p = TRUE, show.values = TRUE, show.legend = FALSE)
+```
+
+## Discussion
+
+### Key Findings
+
+In this chapter, the postoperative critical care admission pathway was broken down into 1) being perceived to require admission followed by 2) later admission to critical care. Using fixed-effects and mixed-effects logistic regression modelling, the relationship between patient-level and hospital-level factors, and the likelihood of patients being perceived to require and eventually being admitted to critical care were investigated. The independent effects of different risk variables on clinical decision-making were estimated. 
+
+First, increased age was non-linearly associated with increased likelihood of being perceived to require critical care, with its marginal effect increasing between 18 to 69 years, plateauing around 70 years and then declining. Other variables known to be associated with increased risk of mortality were positively associated with perception of requirement for critical care, such as increasing ASA-PS grade, increasing surgical complexity and urgency.
+
+Second, increased availability of critical care beds &mdash; both around the time of surgery (measured using the number of empty but staffed critical care beds) and more generally on a hospital-level (measured using the percentage of critical care beds as a proportion of the total number of beds in a hospital) &mdash; was significantly associated with a perceived requirement for critical care. However the effect of critical care bed availability on perceived requirement was small compared to the effects of patient mortality-risk variables.
+
+Third, the presence of an emergency department at the hospital where patients undergo their surgery was negatively associated with perceived critical care requirement, but not with later critical care admission. While the addition of hospital-level variables explained some of the inter-hospital variation seen for both perceived requirement for and admission to critical care, substantial variation remains unexplained by the constructed models.
+
+Fourth, patients undergoing cardiothoracic surgery were much more likely to be perceived to require critical care compared to gastrointestinal surgery, but other surgical specialties were much less likely to have a perceived requirement, despite adjusting for other risk variables. 
+
+Finally, intraoperative episodes such as large volume blood loss and unexpected critical events were associated with critical care admission in patients with a perceived requirement for critical care, and patient-level mortality-risk variables were much less influential in their effects on admission once patients were already perceived to require critical care.
+
+### Interpretation
+
+Whether to admit a patient to critical care after their surgical procedure is a complex decision that clinicians must make, after considering a wide range of factors. Individual patient mortality risk has a large estimated effect on the decision-making process, with higher risk patients (increased ASA-PS grades, more complex surgery, higher surgical urgency, and those with cardiorespiratory comorbidities) being more likely to have a perceived requirement for admission to critical care. However, certain patient characteristics may discourage clinicians from deciding that their patients should receive critical care, such as comorbid dementia, and increasing age beyond 70 years-old. 
+
+While the availability of resources should ideally not influence clinical decision-making and patients should be assigned treatment based on clinical need, this analysis shows that the increased availability of empty critical care beds has a small but significant association with clinicians perceptions for requiring critical care for individual patients. The magnitude of this effect is greatly outweighed by the effect-sizes detected for the risk variables in the model, but nonetheless one can infer that there is a subtle effect of exogenous influences on clinical decision-making at play here. This effect is further confirmed by the finding that patients undergoing surgery in hospitals with a higher proportions of critical care beds were also more likely to be perceived to require critical care. 
+
+After adjustment for baseline factors related to mortality risk such as ASA-PS grade, age, surgical severity and urgency, etc., there was a marked difference in the likelihood for having a perceived requirement for critical care depending on which surgical specialty the patient was being treated by. Compared to gastrointestinal surgery patients, cardiothoracic patients were more than twice as likely to be perceived to require critical care, while orthopaedic, obstetric, gynaecology and urology patients were less than half as likely. Patients of a similar risk profile are therefore not regarded as requiring critical care to a similar extent, and the reasons for this could be multiple. 
+
+First, clinical pathways have evolved in cardiothoracic surgery which mandate the ring-fenced provision of Level 2 or 3 facilities for postoperative recovery [@smith_guidance_2016; @richens_getting_2018]. The 2016 Guidance for the Provision of Anaesthesia Services (GPAS) for cardiothoracic patients states, *"The nature of cardiac surgery demands that all patients should be cared for post-operatively in a unit that conforms to the standards of general level 3 and 2 intensive care facilities."* Similarly, the Getting It Right First Time Programme National Specialty Report for Cardiothoracic Surgery, published in 2018, recommended that, *"All cardiac surgery and many thoracic surgery patients initially recover on an Intensive Treatment Unit (ITU) after their operation."* 
+
+Second, certain specialties may not perceive there to be any benefit from critical care admission for their patients. For example, patients undergoing orthopaedic surgery typically undergo early intensive physical rehabilitation in order to decrease length of stay, postoperative complications and costs, and increases function and quality of life [@briggs_getting_2015]. Intensive care and high-dependency care in contrast is associated with exposure to hospital-acquired infections, reduced access to early mobilisation, oversedation, sleep deprivation, stress, and delirium, all of which conflict with postoperative orthopaedic rehabilitation goals [@taccone_we_2017].
+
+Third, certain specialties may not be historically or culturally primed to recommend critical care to their patients after surgery, because of entrenched behaviours that govern their clinical practice [@robertson_interventions_2006], or because of a lack of familiarity with critical care within their surgical specialty training [@wheatly_maternal_2010]. There might therefore be higher thresholds to critical care referral that exist for patients undergoing procedures in these specialties, regardless of whether or not they are appropriate.
+
+Fourth, other unmeasured confounders not modelled within this analysis might contribute to the risk profile assessment of the patients within certain specialties, above and beyond factors such as ASA-PS grade, age and so on. The presence of certain specific rare diagnoses might be highly influential in determining whether a patient would be perceived to require critical care for some surgical specialties, more so than the factors considered. For example, a diagnosis of eclampsia (population risk of 2.7 cases per 10,000 live births) is highly predictive of critical care admission [@knight_eclampsia_2007].
+
+Undergoing surgery in a hospital with an emergency department (ED) was found to be associated with reduced likelihood of perceived critical care requirement. This finding was consistent with earlier published findings using data from SNAP-2: EPICCS that patients were approximately four times as likely to suffer on-the-day surgical cancellations if their procedure was scheduled in a hospital with an ED [@wong_cancelled_2018]. The proposed mechanism for this finding is that medical patients presenting via ED to hospital compete for the same pool of critical care beds with surgical patients, thus increasing the threshold for patients to be allocated critical care. 
+
+Once the clinical team perceived a requirement for critical care, the majority of patients would subsequently receive admission. However, within this group, patients with increasing age beyond 70 years, with comorbid dementia, and undergoing surgery under surgical specialties are less likely to be admitted, while those with intraoperative critical events and high-volume blood loss were more likely to be admitted. The effects of critical care bed availability no longer appear to be as influential once the decision that the patient needed critical care was made. In contrast, patients who were not perceived to require critical care were subsequently also much less likely to then later be admitted to critical care, and within this second group, intraoperative complications appeared to have a much larger influence in eventual admission.
+
+The MOR for the multilevel models presented in this analysis demonstrated that a substantial amount of unexplained variance persisted despite the patient-level and hospital-level variables considered. The inter-hospital variations when quantified using MOR (e.g. `r MOR(as.data.frame(VarCorr(rec_ml_model2))[1, "vcov"])` for Model C in Table 7-3) are of an order of magnitude larger than some comorbidities such as cardiac (OR = `r exp(fixef(rec_ml_model2)["PMHX_Cardiac"])`) or respiratory (OR = `r exp(fixef(rec_ml_model2)["PMHX_Resp"])`) disease. In other words, for two similar patients presenting to two different hospitals, their likelihood of being perceived to require critical care or being admitted to critical care could vary as much as two otherwise similar patients, one with comorbid ischaemic heart disease and the other without, presenting to the same hospital for the same type of surgery. 
+
+This study therefore highlights that there may be other factors which may be influential in decision-making and admission which have not been considered within this chapter that warrant further investigation, both at a patient level and at an institutional level. Some of these factors may be related to inter-hospital differences in clinician behaviour, culture, logistics and patient pathways which may not be easily captured in a quantitative observational study. Further investigation into the other factors which may influence clinical decision-making around postoperative critical care is thus needed to understand why differences in critical care resource allocation occurs.
+
+### Study limitations
+
+In this analysis, the decisions that clinicians take have been simplified into binary response variables, but this may be a crude model of clinical decision-making. In reality, a clinician may have more than two options for managing a high-risk patient, beyond simply determining their discharge destination. Furthermore, decisions are often arrived at through consultation with the wider multidisciplinary team in conjunction with the patient. A patient may state a preference for or against critical care admission, due to previous experience, or treatment may be for palliative reasons, all these were factors not captured within the data variables modelled. Clinical teams may consider cancellation or postponement of surgery for the highest-risk elective patients until critical care beds are available, in which case their data would not have been sampled within this dataset. Alternative management on the general ward with critical care outreach support may be an acceptable pathway in some hospitals, and there may thus be a spectrum of intensity in the amount of postoperative surveillance available in certain institutions.
+
+The response variable of perceived requirement for critical care used in the part one analysis was filled in around the time of surgery, and although anaesthetists were asked to complete the field as though they were deciding preoperatively whether the patient would require critical care once the procedure was finished, there was no way of policing whether the response to this was influenced by intraoperative findings. The CRFs could have been completed at any time whilst the patient was undergoing surgery, including intraoperatively or during the immediate postoperative period. This could introduce additional information that biased responses about anticipated risks, for example if there were intraoperative complications with haemorrhage or haemodynamic instability, an otherwise low risk patient which would not have been perceived to require critical care might have had their recorded perceived requirement for critical care variable changed by the anaesthetic team retrospectively. However there is evidence from the data that if this did happen, it did not have a substantial effect on the study findings, as the odds ratios for intraoperative critical events and blood loss were lower for the subgroup with perceived requirement for critical care than for the subgroup without.
+
+### Clinical implications
+
+Although clinicians largely base their decisions about who needs to be admitted for critical care postoperatively on the risk profiles of their patients, exogenous factors such as the availability of critical care beds &mdash; both on the day of surgery, and more broadly as a function of institutional capacity &mdash; exert a subtle influence. Similarly, risky patients may be more or less likely to have a perceived requirement for critical care if they underwent surgery at an institution with more or less critical care beds in general, or at a time coinciding with more or less empty beds. Furthermore, similarly risky patients from particular surgical specialties may be more or less likely to be perceived to require critical care, based largely on specialty-specific factors, which may not have strong clinical merit. For example, a 65 year-old patient with exertional angina undergoing coronary artery bypass grafting is much more likely to be perceived to require and then to receive critical care admission than another patient of similar age and similar baseline risks undergoing surgery of a different specialty, all other factors being equal, even though the predicted risk of mortality in either patient may be similar.
+
+Clinicians should therefore be mindful of their reasons for and against deciding a patient needs critical care when faced with an individual presenting in front of them for surgery. They should also be cognizant of biases which influence their decision-making about resource allocation, especially when the treatments allocated may affect patient outcomes.
+
+### Summary
+
+Patients with increased risk factors for postoperative mortality are more likely to have a perceived requirement for critical care, and although critical care bed availability has a significant influence, the effects of patient risk factors and surgical specialties on clinical decision-making about postoperative critical care admission are larger. Although a number of factors have been identified which are influential in being perceived to require and eventually being admitted to critical care, a substantial amount of residual unexplained inter-institutional variance still exists that has not been accounted for within these analyses.
+
+```{r, eval=FALSE}
+anova(rec_multilevel_null, rec_multilevel_null_country, rec_fixed_null, refit = TRUE) %>%
+  pander("Table 7-2: Analysis of variance table comparing intercept-only models of the likelihood of patients being recommended for postoperative critical care. `rec_fixed_null` is the fixed-intercept model, `rec_multilevel_null_country` is a model with random-intercepts for countries, and `rec_multilevel_null` is a model with random-intercepts for hospitals. Df = degrees of freedom. AIC = Akaike's Information Criterion. BIC = Bayesian Information Criterion. logLik = log-likelihood value. Chisq = Chi-squared test statistic.")
+```
+
+##### PAGE BREAK

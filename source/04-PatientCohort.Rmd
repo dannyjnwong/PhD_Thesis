@@ -1,0 +1,169 @@
+---
+title: 'Chapter 4: Inpatient Surgery Cohort'
+subtitle: "Description of the methods for Part 2: Inpatient Cohort"
+author: "Danny Wong"
+date: "04 December 2019"
+csl: ../references/bib/the-lancet.csl
+bibliography: ../references/bib/SNAP2.bib
+link-citations: yes
+description: "This is Chapter 2 of Danny's PhD Thesis"
+output: 
+  word_document:
+    reference_docx: styles_phd.docx
+---
+
+```{r PatientCohort_setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(pander)
+library(powerAnalysis)
+```
+
+# SNAP-2: EPICCS Inpatient Surgery Cohort
+
+To help answer research questions relating to patient risk and outcomes, as well as clinical decision-making around postoperative critical care referrals and admissions, a prospective observational cohort of patients undergoing inpatient surgery was established for SNAP-2: EPICCS. Data were collected by anaesthetists on all patients they anaesthetised who were undergoing inpatient surgery for seven-day periods in March (UK), June (Australia) and September 2017 (New Zealand). Baseline patient risk factor data, and questions about clinical decision-making and resource availability related to critical care referral and admission were also collected. This cohort was intended to be a representative sample of the whole population of patients undergoing surgery requiring overnight stay in the UK, Australia and New Zealand.
+
+## Aims and objectives
+
+This part of SNAP-2: EPICCS aimed to describe the epidemiology of perioperative risk and outcome, and critical care referral and admission after inpatient surgery in the three participating countries.
+
+The objectives were to:
+
+1. Characterise the inpatient surgical population using a comprehensive one-week sample of surgical activity in a large representative cross-section of public hospitals.
+2. Describe the tools used by clinicians to estimate perioperative risk in these patients.
+3. Evaluate the accuracy of previously-validated risk prediction tools in this cohort, and compare the performance of these tools against subjective clinical assessment of risk.
+4. Explore the patient- and hospital-level factors which were associated with patients getting recommended for, and then eventually being admitted to, critical care.
+
+## Cohort inclusion and exclusion criteria
+
+All patients undergoing inpatient surgery (both elective and/or emergency) during the study week were enrolled onto the cohort study. Formal inclusion and exclusion criteria as published in the study protocol are described below [@moonesinghe_snap-2_2017].
+
+- **Inclusion criteria** &mdash; Adult (≥18 years) patients undergoing surgery, or other interventions, that require the presence of an anaesthetist, and who are expected to require overnight stay in hospital. These would include all procedures taking place in an operating theatre, radiology suite, endoscopy suite or catheter laboratory for which inpatient (overnight) stay is planned, including both planned and emergency/urgent surgery of all types, caesarean section, surgery for complications of childbirth, endoscopy and interventional radiology procedures.
+- **Exclusion criteria** &mdash; Patients who indicate they do not want to participate in the study, ambulatory surgery, non-surgical obstetrics, ASA-PS (American Society of Anesthesiologists Physical Status score) grade VI, non-interventional diagnostic imaging (e.g., CT or MRI scanning without interventions), emergency department or critical care interventions requiring anaesthesia or sedation but no interventional procedure.
+
+Obstetric patients undergoing surgery and other interventional procedures requiring anaesthetic support such as endoscopy and interventional radiology procedures were included in this cohort as these patients are often overlooked in other perioperative cohort studies while they may still conceivably be competing for the same critical care resources following their procedures depending on baseline patient risks and/or whether there were any intraoperative complications. Furthermore, it was key to investigate the likelihood of critical care admission according to predicted mortality risks accross all surgical specialties, to ascertain what other biases might influence referral and admission.
+
+## Cohort study data variables and Case Report Forms
+
+Case Report Forms (CRF) were completed for each patient who met the study inclusion and exclusion criteria on pen and paper, either by the perioperative anaesthetist caring for the patient or by other research staff, depending on the sections of the CRF to be completed. The data was then transcribed onto an electronic CRF hosted securely on the internet by staff at each participating site. The CRF underwent multiple rounds of review by members of the central project team, study steering group and Research Ethics Committee, before then undergoing a feasibility trial in a pilot study conducted in 2 hospital sites (University College Hospital, London; Derriford Hospital, Plymouth). The final version of the CRF is included in *Appendix 2*.
+
+### Baseline risk factors
+
+Demographic information was collected for each patient participant including identifiable information for the purposes of linking with data from other national registries, these include: patient names, dates of birth, sex, NHS numbers (alternatively CHI numbers in Scotland, and HSC numbers in Northern Ireland), and postcodes. Details of the patients' surgical procedures, comorbidities, some details of medications and preoperative investigations (including latest blood test results if available), mode of anaesthesia, intraoperative findings, and postoperative destination were also recorded. The variables collected were those regarded as being influential in their associations with postoperative complications, as informed by evidence from the literature [@collins_risk_1999; @arbous_mortality_2001; @bennett-guerrero_comparison_2003; @donati_new_2004; @khuri_determinants_2005; @ahmed_predictors_2010; @anderson_higher_2011; @findlay_knowing_2011; @kelly_factors_2012; @krell_rw_extended_2014; @ahmad_use_2017].
+
+Also included in the patient dataset were specific variables used in following risk stratification models which have been validated for prediction of postoperative mortality in multicentre evaluations:
+
+1. **ASA-PS (American Society of Anesthesiology Physical Status classification System)** [@cullen_asa_1994] &mdash; ASA-PS is a 6-category classification system, ranging from grades I to VI, in which patients are graded according to their physical health, defined as: **I** a normal healthy patient; **II** a patient with mild systemic disease without substantive functional limitations; **III** a patient with severe systemic disease with substantive functional limitations; **IV** a patient with severe systemic disease that is a constant threat to life; **V** a moribund patient not expected to survive without the operation; **VI** a declared brain-death patient whose organs are being removed for donation. SNAP-2: EPICCS excluded ASA-PS VI patients.
+2. **SRS (Surgical Risk Scale)** [@sutton_surgical_2002] &mdash; SRS is a perioperative risk scoring system derived from multivariable logistic regression in a cohort of 4,309 patients in a single UK centre, and validated in 2,780 patients from the same centre from a later time period. It incorporates predictor variables including NCEPOD urgency status (Elective, Scheduled, Urgent, Emergency surgery), magnitude of surgery (Minor, Intermediate, Major, Major-plus, Complex major, as defined by the British United Provident Association [BUPA] operative grade), and ASA-PS. Each variable is ascribed a score (1 to 4 for NCEPOD urgency status; 1 to 5 for BUPA operative grade; and 1 to 5 for ASA-PS I to V), and summed, generating a scale ranging from a minimum of 3 to a maximum of 14. The SRS score could then be converted to a probability scale using the following formula $ln[R∕(1−R)] = -9.81 + 0.84\times \text{SRS score}$, where $R$ is the probability of mortality.
+3. **P-POSSUM (Portsmouth predictor equation modification of the Physiological and Operative Severity Score for the enUmeration of Mortality and morbidity)** [@copeland_possum:_1991; @prytherch_possum_1998] &mdash; P-POSSUM is a modification of an earlier POSSUM risk score described by Copeland *et al* [@copeland_possum:_1991], and both use a range of physiological and operative variables to predict risk in a logistic regression formula. P-POSSUM was derived in a single-centre cohort of 2,500 patients and validated in 7,500 patients from a later time period. The physiological variables include age, cardiac history, respiratory history, blood pressure, pulse rate, Glasgow Coma Score (GCS), haemoglobin level, white cell count, serum urea concentration, serum sodium concentration, serum potassium concentration and electrocardiography findings. Operative variables include the severity of the procedure, number of procedures undertaken in the preceding 30 days, total intraoperative blood loss, presence of peritoneal soiling, presence of malignancy and urgency of surgery. A weighted score of 1, 2, 4 or 8 was assigned to each variable, depending on the extent to which they deviated from normal values, with higher weights ascribed to increasing risks. The physiological and operative scores were then converted to a probability scale using the formula $ln[R∕(1−R)] = -9.065 + 0.1692\times \text{Physiological score} + 0.1550\times \text{Operative score}$, where $R$ is the probability of mortality.
+4. **SORT (Surgical Outcome Risk Tool)** [@protopapa_development_2014] &mdash; SORT is a perioperative risk score derived using multivariable logistic regression in a multicentre cohort of 11,219 patients and validated in 5,569 patients with 6 variables: age (categorised into <65, 65-79, and &ge;80 years), ASA-PS grade (categorised into I&ndash;II, III, IV, or V), NCEPOD urgency status (Elective, Expedited, Urgent or Immediate), whether the patient was undergoing high risk surgery (defined as gastrointestinal, thoracic or vascular surgery), whether the surgery was classified as Xmajor or Complex, and whether the patient had a diagnosis of cancer.
+
+### Outcome variables and duration of follow-up
+
+Outcomes data for postoperative morbidity and mortality, and length of hospital stay were collected for each patient. The presence of postoperative morbidity as defined by the Postoperative Morbidity Survey (POMS). POMS was completed on all patients who were alive and remained in hospital on day 7 after surgery [@bennett-guerrero_use_1999; @grocott_postoperative_2007; @davies_measuring_2013]. The clinical sources used for POMS outcomes included a combination of direct patient observation, treatment and observation charts and biochemistry and pathology results (Table 4-1). POMS is a validated measure of postoperative morbidity and although other morbidity outcomes were considered, POMS was chosen for its high inter-rater agreement/reliability [@grocott_postoperative_2007], and its correlation with longer-term patient survival [@moonesinghe_survival_2014]. Furthermore, POMS allowed the morbidity to be reported as an overall binary composite score (presence or absence of any morbidity), or as organ-specific binary outcomes (presence or absence of morbidity in any single organ-system).
+
+| Morbidity Domain | Criteria                               | Source of Data  |
+|:-----------------|:---------------------------------------|:----------------|
+|Pulmonary         |New requirement for oxygen or respiratory support.| Patient observation or Treatment chart|
+|Infectious        |Currently on antibiotics or temperature >38°C in the last 24hr. | Treatment chart or Observation chart|
+|Renal             |Presence of oliguria <500 mL/24hr, increased serum creatinine (>30% from preoperative level) or urinary catheter in situ.| Fluid balance chart or Biochemistry result|
+|Gastrointestinal  |Unable to tolerate an enteral diet for any reason, including nausea, vomiting, and abdominal distension, or use of antiemetic.| Patient questioning, Fluid balance chart or Treatment chart|
+|Cardiovascular    |Diagnostic tests or therapy within the last 24 hr for any of the following: new myocardial infarction or ischaemia, hypotension (requiring pharmacological or fluid therapy >200 mL/hr), atrial or ventricular arrhythmias, cardiogenic pulmonary oedema, or thrombotic event requiring anticoagulation.| Treatment chart or Note review|
+|Neurological      |New focal neurological deficit, confusion, delirium, or coma.| Note review or Patient questioning|
+|Haematological    |Requirement for any of the following within the last 24 hr: packed erythrocytes, platelets, fresh-frozen plasma, or cryoprecipitate.| Treatment chart or Fluid balance chart|
+|Wound             |Wound dehiscence requiring surgical exploration or drainage of pus from the operation wound with or without isolation of organisms.| Note review or Pathology result|
+|Pain              |New postoperative pain significant enough to require parenteral opioids or regional analgesia.| Treatment chart or Patient questioning|
+
+Table: Table 4-1: Postoperative Morbidity Survey (POMS) Domains, adapted from Grocott *et al* [@grocott_postoperative_2007].
+
+Other outcome variables collected were: inpatient mortality, length of hospital stay, and duration spent receiving critical care, with each censored at 60 days after surgery.
+
+## Hospital-level critical care occupancy data
+
+Concurrent to patient-level data collection, hospital-level data on availability of critical care beds was also collected at two time points (08:00 and 20:00hrs) during each day of patient recruitment in order to ascertain the capacity of critical care at each participating hospital site at the time closest to surgery. A copy of the CRF used to collect this data is found in *Appendix 3*. This data will facilitate investigation of the effects of critical care capacity on patient referral patterns to critical care.
+
+## Cohort study analysis plan
+
+The full study analysis plan for the patient cohort has been described in a published protocol paper [@moonesinghe_snap-2_2017]. Three analyses have been designed, which will be reported within this PhD thesis. Further details of the statistical methods for these will be discussed in subsequent chapters. To summarise, the analyses are divided into following:
+
+1. **Descriptive epidemiology of inpatient surgical critical care** &mdash; The characteristics of patients undergoing inpatient surgery in the UK are described, including the distribution of patient demographics, baseline risk factors, and outcomes, stratified by whether patients were admitted to critical care immediately following surgery. 
+2. **Predicting perioperative risk** &mdash; The performance of previously-validated risk prediction and stratification tools are evaluated in this cohort and compared against the performance of subjective clinical risk prediction. The frequency in which existing risk prediction tools are used in clinical practice are described.
+3. **Determinants of critical care referral and admission** &mdash; The patient- and hospital-level factors associated with whether patients were referred for critical care and whether they eventually did receive postoperative critical care were investigated. 
+
+## Sample size considerations
+
+A power analysis was performed by Dr Mizan Khondoker (consulting statistician) for establishing the sample size for the inpatient surgery cohort (*Appendix 4*). The sample size was based on detecting a benefit for critical care admission on patient outcomes, which is a separate analysis beyond the scope of this thesis. However, in 1 week, based on data from the SNAP-1 study [@walker_patient_2016], it was anticipated that SNAP-2: EPICCS would be able to recruit >12,000 patients. 
+
+## Cohort study data quality checks
+
+Quality assurance of the data to be used in study analyses is important for confidence in the outputs that arise in the findings using data from the patient cohort. There were 2 major obstacles to data quality anticipated:
+
+1. Incomplete case capture
+2. Incomplete/missing data variables from individual patient records
+
+Data quality checks were therefore designed to identify potentially incomplete case capture at participating sites and to assess for missing variables in individual patient records. 
+
+### Incomplete case capture
+
+All SNAP-2: EPICCS sites were expected to recruit 100% of the patient cases which meet inclusion/exclusion criteria of Study 2. However, the denominator (number of cases which met the inclusion criteria) is not known for certain. Therefore, a method for estimating the case capture rate at each site was planned.
+
+Study recruitment occurred during one week in March 2017, and incomplete case capture could mean lower than expected total number of cases during the study week, or lower than expected cases during any single day of the study at a particular site.
+
+The "gold standard" of case ascertainment would be to compare the number of cases captured in the study to another registry or database where inpatient surgical procedures are recorded and considered to be complete. This is the approach adopted by National Clinical Audits in the UK [@healthcare_quality_improvement_partnership_-z_2018]. For example, the National Emergency Laparotomy Audit (NELA) obtains denominator data from Hospital Episode Statistics, which is an administrative dataset that records Office of Population Censuses and Surveys Classification of Surgical Operations and Procedures (OPCS) codes for all procedures [@nela_project_team_third_2017]. This method was not considered practicable for this PhD research as obtaining the denominator data from NHS Digital would have been too resource-intensive, due to regulatory work and subsequent data-linkage and preparation.
+
+Therefore, in order to identify incomplete case capture, a number of approaches were used.
+
+### Statistical modelling
+
+Statistical models were constructed to estimate the expected number of cases that each site was supposed to submit to the study. The purpose of these models was to help guide subsequent manual review of the data. 
+
+Assuming that most sites submitting data to the study devoted their best efforts to recruit all possible cases to the study, Sites which were outliers in this distribution of cases captured could be identified if they fell beyond confidence intervals of the expected numbers recruited. In other words, if a statistical model were constructed with the dependent (response) variable being the number of cases expected, and independent (predictor) variables which could account for the case numbers were included in the model, then it would be possible to identify sites which recruited statistically significantly fewer cases than expected by this model.
+
+Using Poisson regression for count data, a model was constructed which predicted the total number of cases expected during the study week at each site based on characteristics of the site, including the following predictor variables: total number of hospital beds at the site, whether the site has a critical care unit and whether the site offers any Tertiary Services. I further constructed a model which predicted the total number of cases expected on any given day of study recruitment with the assumption that different days of the week would have different surgical throughput based on logistical factors. For this second model, predictors were: the day of the week and the other variables from the first model.
+
+Using the constructed model, the expected number of cases for each hospital in total for the week of the study recruitment, and then the expected number of cases for each hospital for any given day of the study recruitment were computed. The residual (number of actual cases captured minus the number of expected cases) was also then calculated. Sites which had residuals on either side of the 95% confidence interval (2 Standard Deviations) from a mean of zero (no difference) were identified. These outlier sites were then examined individually for reasons which might have explained deviation from expected case capture. The models then opened up a discussion with each local collaborator about why case ascertainment might have been below expected and discern if there was bias in their sampling.
+
+### Qualitative survey and discussion with local collaborators
+
+On each day of the study, Principal Investigators (PIs) at each site completed a questionnaire which assessed qualitatively how well their site managed to capture all possible cases which fulfilled the study inclusion/exclusion criteria. A single question was asked for each study day: "Apart from patients who opted out, what proportion of eligible patients do you think your site missed during data collection for the main study today?"
+
+Possible responses to this question were categorical:
+
+1. None. We captured every last one.
+2. We might have missed a couple.
+3. We definitely missed a few.
+4. We missed a significant minority.
+5. We missed more than half.
+
+This provided a screening tool to identify particular problems with case capture, and to initiate a dialogue with PIs to clarify problems with case capture during the study.
+
+Combining the regression models and the qualitative surveying method, sites which were potential outliers in terms of case capture were identified.
+
+### Incomplete/missing data variables from individual patient records
+
+Missing data variables is a common problem in large observational studies. Completeness of data variables was reviewed monthly from the start of data collection to the end of database closure. Data was entered onto the electronic CRF in sections:
+
+1. Demographics
+2. Procedure details
+3. Preassessment and Intraoperative details
+4. Immediate Postop Details
+5. Day 7 Follow up
+6. Day 60 Follow up
+  
+Each section was programmed with data validation rules to highlight missing variables within the section, to ensure that individual values did not fall outside plausible limits (e.g. the Glasgow Coma Scale can only take integer values between &ge;3 and &le;15), and to ensure that impossible values could not be entered (e.g. dates of birth after dates of surgery). Once a section was complete the section would be marked as complete, and once all the sections were complete a record could be locked to prevent further amendments. Records with incomplete sections would be highlighted and visibly alerted to collaborators at each site using a colour-coded system. 
+
+Routine email reminders were sent to sites with low data completeness approximately every month, and then in the final month before database closure approximately weekly for the lowest performing sites. Sites with missing data variables on the paper CRFs were asked to conduct individual patient case note reviews in order to obtain the data retrospectively. However, some variables could not be obtained retrospectively in this manner as they asked about the opinions of the clinicians involved in patient care at the time of surgery, and these opinions may not have been documented in patient case notes. Before database closure, reminder emails were sent to all PIs and collaborators asking them to check over their data to resolve any errors and deficits in their data.
+
+At database closure, 4 sites were granted 2-week extensions to upload patient data (Musgrove Park Hospital, Western General Hospital, Royal Orthopaedic Hospital, Queen Alexandra Hospital, and Hull Royal Infirmary).
+
+Missingness in data variables was assessed in the following ways:
+
+1. Missingness in individual variables were visually inspected using in exploratory plots and summary tables. 
+2. Individual sites were assessed on the proportion of their data which contained missing data variables.
+
+## Cohort study feasibility pilot
+
+The cohort study was piloted in two hospital sites between Tuesday 17 January 2017 to Monday 23 January 2017 at University College Hospital London and Derriford Hospital (Plymouth), with a truncated follow-up period to day 7 (POMS outcomes). The study pilot allowed for the logistics of study delivery to be modified and CRF design refinements to be made in anticipation of potential issues which may have arose during the final study in the rest of the UK. Following the pilot, amendments to the study protocol were made and approved according to research governance procedures. A planned sub-study, enrolling a subset of patients to an additional arm of data-collection looking at qualitative Patient Reported Outcome Measures (PROMs) at Day 3 after the surgery, was removed from the original study plans due to the resource-intensive nature of collecting this data. Further minor amendments to phrasing of questions in the CRFs were also made as a result of the pilot study to reduce the likelihood of ambiguous data capture and improve on clarity.
+
+##### PAGE BREAK

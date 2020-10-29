@@ -1,0 +1,1283 @@
+---
+title: 'Chapter 5: Epidemiology of Postoperative Critical Care'
+subtitle: "Results of the SNAP-2: EPICCS Inpatient Surgery Cohort"
+author: "Danny Wong"
+date: "30 April 2019"
+csl: ../references/bib/the-lancet.csl
+bibliography: ../references/bib/SNAP2.bib
+link-citations: yes
+description: "This is Chapter 5 of Danny's PhD Thesis"
+output: 
+  word_document:
+    reference_docx: styles.docx
+---
+
+# Descriptive Epidemiology of Postoperative Critical Care
+
+```{r DescEpi_setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, dpi = 300)
+options(scipen=2, digits=2)
+
+#Load libraries and data
+library(tidyverse)
+library(knitr)
+library(tableone)
+library(pROC)
+library(rms)
+library(caret)
+library(PredictABEL)
+library(pander)
+library(DiagrammeR) #Needs ver. 0.9.2 to work
+library(DiagrammeRsvg)
+library(ggridges)
+library(cowplot)
+library(survival)
+library(survminer)
+panderOptions('table.split.table', Inf)
+
+load("../data/SNAP2_combined_clean.Rdata") 
+
+#Some data preprocessing
+patients_clean <- patients_clean %>% 
+  #Create a variable for whether the patients go to critical care postop
+  mutate(CCU_adm = (S07PlannedDayOfSurgeryIcuHduPacuAdmission == "Y" | 
+                      S07UnplannedDayOfSurgeryIcuHduPacuAdmission == "Y")) %>%
+  #Create an outcome variable (mortality at 30 days)
+  mutate(S07StillInHospitalPrimaryAdmissionAfterSurgery = replace(S07StillInHospitalPrimaryAdmissionAfterSurgery,
+                                                                  which(is.na(S07StillInHospitalPrimaryAdmissionAfterSurgery) &
+                                                                          S05PatientStillAliveAndInHospital == "N"), "N")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "A"), "A")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "D"), "D")) %>%
+  mutate(mort30 = (S07PostopLOS <= 30 & S07StatusAtDischarge == "D")) %>%
+  mutate(mort30 = replace(mort30, which(is.na(mort30) & S07StillInHospitalPrimaryAdmissionAfterSurgery == "Y"), FALSE)) %>%
+  #Create 60 day mortality
+  mutate(S07StillInHospitalPrimaryAdmissionAfterSurgery = replace(S07StillInHospitalPrimaryAdmissionAfterSurgery,
+                                                                  which(is.na(S07StillInHospitalPrimaryAdmissionAfterSurgery) &
+                                                                          S05PatientStillAliveAndInHospital == "N"), "N")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "A"), "A")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "D"), "D")) %>%
+  mutate(mort60 = (S07PostopLOS <= 60 & S07StatusAtDischarge == "D")) %>%
+  mutate(mort60 = replace(mort60, which(is.na(mort60) & S07StillInHospitalPrimaryAdmissionAfterSurgery == "Y"), FALSE)) %>%
+  #Winsorise postop length of stay to max 60 days
+  mutate(LOS = replace(S07PostopLOS, which(S07PostopLOS > 60), 60)) %>%
+  #Winsorise postop LOS for those still in hospital on Day 60 to 60 days
+  mutate(LOS = replace(LOS, 
+                       which(is.na(LOS) &
+                               S05PatientStillAliveAndInHospital == "Y"), 60)) %>%
+  #Decode procedure codes to obtain specialties
+  left_join(select(read.csv("../data/SNAP2_procedurelist_specialty_coded.csv"), 
+                   Code, specialty = Specialty), 
+            by = c("S02PlannedProcedure" = "Code")) %>%
+  mutate(specialty_recoded = recode(specialty, 
+                                    `Colorectal` = "GI", 
+                                    `UpperGI` = "GI", 
+                                    `Bariatric` = "GI",
+                                    `HPB` = "GI",
+                                    `Spine` = "Neuro-Spine",
+                                    `Neuro` = "Neuro-Spine",
+                                    `Urology` = "Gynaecology-Urology",
+                                    `Gynae` = "Gynaecology-Urology",
+                                    `Transplant` = "Other", 
+                                    `Endoscopic` = "Other", 
+                                    `IR` = "Other", 
+                                    `Cardiology` = "Other", 
+                                    `Opthalmic` = "Other",
+                                    `Plastics` = "Other",
+                                    `MaxFax-Dental` = "Other", 
+                                    `ENT` = "Other", 
+                                    `Endocrine` = "Other", 
+                                    `Breast` = "Other")) %>%
+  mutate(S02PlannedProcSeverity = recode(S02PlannedProcSeverity,
+                                         `Min` = "Minor",
+                                         `Int` = "Intermediate",
+                                         `Maj` = "Major",
+                                         `Xma` = "Xmajor", 
+                                         `Com` = "Complex")) %>%
+  mutate(S02OperativeUrgency = recode_factor(S02OperativeUrgency, 
+                                             `Ele` = "Elective",
+                                             `Exp` = "Expedited",
+                                             `U` = "Urgent",
+                                             `I` = "Immediate")) %>% 
+  mutate(Diabetes = case_when(S03Diabetes == "1" ~ "Y",
+                              S03Diabetes == "2D" ~ "Y",
+                              S03Diabetes == "2I" ~ "Y",
+                              S03Diabetes == "2O" ~ "Y",
+                              S03Diabetes == "N" ~ "N")) %>%
+  #Fix an issue where patients who are discharged before Day 7 have positive POMS morbidities
+  mutate_at(.vars = vars(S05O2Therapy:S05RegionalAnalgesia),
+            .funs = funs(replace(., which(LOS < 7 & . == "Y"), "N"))) %>%
+  mutate_at(.vars = vars(POMS:POMS_Pain),
+            .funs = funs(replace(., which(LOS < 7 & . == TRUE), FALSE))) %>%
+  mutate(PPOSSUM = arm::invlogit(pPOSSUM_mort),
+         SORT = arm::invlogit(SORT_mort),
+         SRS = arm::invlogit(SRS_mort)) %>%
+  mutate(S02PatientOrigin = replace(S02PatientOrigin,
+                                    which(S02PatientOrigin == "H" & S02PreopLOS > 0), "I"))
+
+#Need to establish the number of cases excluded because of missing data
+#First these are all the variables that go into pPOSSUM, SORT and SRS.
+
+#Missing Age
+patients_strobe <- patients_clean %>% 
+  filter(!is.na(S01Age))
+strobe_table <- data.frame(Description = "Total patients", 
+                           N = nrow(patients_clean)) %>%
+  rbind(data.frame(Description = "Missing age",
+                   N = nrow(patients_strobe)))
+
+#Missing ASA
+patients_strobe <- patients_strobe %>%
+  filter(!is.na(S03AsaPsClass)) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing ASA-PS grade",
+                   N = nrow(patients_strobe)))
+
+#Missing NCEPOD urgency
+patients_strobe <- patients_strobe %>%
+  filter(!is.na(S02OperativeUrgency)) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing NCEPOD urgency",
+                   N = nrow(patients_strobe)))
+
+#Missing surgical procedure details
+patients_strobe <- patients_strobe %>%
+  filter(!(is.na(S02PlannedProcSeverity) | 
+              is.na(S02PlannedProcedure))) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing surgical procedure details",
+                   N = nrow(patients_strobe))) 
+
+#Missing malignancy status
+patients_strobe <- patients_strobe %>%
+  filter(!(is.na(S04Malignancy) |
+             is.na(S03PastMedicalHistoryMetastaticCancerCurrent))) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing malignancy status",
+                   N = nrow(patients_strobe))) 
+              
+#Missing 30-day mortality outcome data
+patients_strobe <- patients_strobe %>% 
+  filter(!(is.na(mort30)))
+strobe_table <- rbind(strobe_table, 
+                      data.frame(Description = "Missing mortality outcome data",
+                                 N = nrow(patients_strobe)))
+
+patients_clean <- patients_strobe
+```
+
+In a seminal paper describing the risk profile of patients undergoing surgery in the UK, Pearse *et al* used the Intensive Care National Audit & Research Centre (ICNARC)[^ICNARC] and CHKS[^CHKS] registry data from patients undergoing surgery in a five-year period between 1999 and 2004 [@pearse_identification_2006]. They reported a 1.9% mortality for hospital admissions involving a general surgical procedure (n = 78,378 of 4,117,727 hospital admissions). They also identified a subset of high-risk patients undergoing specific surgical procedures which were associated with high mortality rates within their dataset that accounted for 83.8% of deaths but for only 12.5% of procedures. Within this high-risk subset, less than 15% of patients were admitted to critical care despite the high mortality rate.
+
+[^ICNARC]: ICNARC manage the Case Mix Programme (CMP), a national audit of patients admitted to critical care in England, Wales and Northern Ireland.  https://www.icnarc.org/Our-Audit/Audits/Cmp/About
+
+[^CHKS]: CHKS are a UK-based provider of software for healthcare intelligence and quality improvement analytics. http://www.chks.co.uk/
+
+In the decade or so that has passed since Pearse and colleagues' publication, there is an increasing recognition that the population in the developed world is ageing, and that the risk profile of patients presenting for surgery is changing. This point was highlighted in recent paper by Fowler *et al*, who undertook a time trend ecological analysis of Hospital Episode Statistics and Office for National Statistics data for England from 1999 to 2015, that found: 1) the population of patients presenting for surgery was older than the general population of England; 2) this age gap was increasing over time; and 3) the number and proportion of people aged &ge;75 years undergoing surgery during this period was growing [@fowler_age_2019]. 
+
+In parallel with the changes in the surgical population, perioperative care pathways are also evolving. There is greater recognition that most low-risk patients would benefit from shorter periods of physiological disruption through the adoption of Enhanced Recovery After Surgery (ERAS) pathways [@miller_successful_2014; @ljungqvist_enhanced_2017], which encourage early return of normal function (e.g. feeding and mobilisation); while high-risk surgical patients might have their risks mitigated by pre-optimisation before they present to surgery, improved intraoperative management, and higher intensity postoperative care after their procedures, in order to reduce postoperative complications. Indeed, as indicated in earlier chapters, the National Confidential Enquiry into Patient Outcome and Death (NCEPOD) issued guidance in 2011 recommending that all patients with a predicted mortality of &ge;5% should be directly admitted to critical care after surgery, while the Royal College of Surgeons of England and the Department of Health initially recommended &ge;10% predicted mortality threshold for postoperative admission that has since been revised to &ge;5% in line with the NCEPOD guidance [@findlay_knowing_2011; @anderson_higher_2011; @lees_high-risk_2018]. 
+
+Although the extent to which patients deemed as "high-risk" actually receive critical care admission after their surgery is thought to be lower than would be appropriate [@pearse_identification_2006; @pearse_mortality_2012; @vester-andersen_mortality_2014; @kahan_critical_2017], the majority of studies in the literature do not establish the patients' preoperatively predicted risks when defining which patients were high-risk. Instead, many of the studies looked retrospectively at the patients who died after surgery, and established what proportion of those who died received immediate admission to critical care in the period after surgery and before death.
+
+Therefore, in this chapter, I shall examine the risk profile of patients presenting for surgery in the UK, Australia and New Zealand, and investigate the extent to which patients deemed as high-risk are appropriately admitted to critical care immediately after surgery, using the patient cohort from SNAP-2: EPICCS. The epidemiology of patients undergoing surgery shall be described, along with the predicted risks of these patients as defined by a number of widely available objective risk prediction tools. Finally, the risk distribution of the surgical cohort, and the proportion of these patients who were admitted to critical care will be presented.
+
+## Methods
+
+The inclusion and exclusion criteria, details of how the patient cohort was recruited, and other methodological details of the patient cohort component of SNAP-2: EPICCS have been described in *Chapter 2*. 
+
+### Statistical analyses
+
+The descriptive epidemiology of the inpatient surgical cohort that was recruited for SNAP-2: EPICCS will be reported, including the incidence of baseline preoperative risk factors, types of surgery undertaken, and intraoperative surgical factors in the patients undergoing inpatient surgery in the UK, Australia and New Zealand recruited to the study.
+
+Cases with missing data for the following variables are excluded from the analysis presented in this chapter: age, ASA-PS grade, NCEPOD surgical urgency, surgical procedure details (i.e. operation performed), patient malignancy status, 30-day mortality outcomes. The reason for this exclusion is that these are the minimum data required by many of the risk prediction tools to compute mortality risks at baseline.
+
+Distributions of variables will be graphically displayed where appropriate, and measures of central tendency and variance will be reported as means and standard deviations, or medians and interquartile ranges, for normally-distributed and non-normally-distributed data respectively. The distribution of preoperatively recorded risk variables will be reported, and using these risk variables, predicted risks (as determined using P-POSSUM, SORT and SRS) will be computed. The distribution of predicted risks will also be reported.
+
+The proportion of patients immediately admitted to critical care after surgery will also be reported, stratified by a number of baseline risk factors, including patient age, ASA-PS grade, surgical specialty, surgical complexity, and urgency of surgery. Finally, overall unadjusted outcomes of patients will be described for the whole cohort, and then further described according to country, and by whether patients were admitted to critical care or not. Outcomes that will be presented include: postoperative lengths of stay, lengths of stay in critical care, morbidity (at 7-days after surgery) and mortality (at 30- and 60-days) outcomes.
+
+### Missing data variables
+
+Data completeness was high, with less than 1% unexpected missing data for most baseline variables. As the study did not collect any additional blood test investigations beyond what patients would have received in their routine clinical care, some blood test values were not known at the time of surgery, but these were not considered missing data. Full summary statistics for each collected variable, along with missingness, are reported in *Appendix 5*.
+
+## Results
+
+### Patient characteristics
+
+Patient data were collected from a total of `r formatC(strobe_table$N[1], big.mark = ",")` surgical episodes in `r length(unique(patients_clean$SiteCode))` hospitals across the UK, Australia and New Zealand. After cases were excluded for missing data, the number of cases included for analysis was `r formatC(nrow(patients_clean), big.mark = ",")` (Figure 5-1).
+
+```{r DescEpi_Fig5_1_strobe, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=6, fig.align='center', fig.cap='Figure 5-1: Cases included and excluded from analysis.'}
+#Set up the contents for each box
+a1 <- paste0('Total available patients\nfrom ',
+             length(unique(patients_clean$SiteCode)),
+             ' hospitals\n(n = ', 
+             formatC(strobe_table$N[1], big.mark = ','), 
+             ')')
+b1 <- ''
+c1 <- paste0('Included for analysis\n(n = ',
+             formatC(nrow(patients_clean), big.mark = ','),
+             ')')
+
+a2 <- ''
+b2 <- paste0('Total excluded (n = ',
+             strobe_table[1,2] - strobe_table[7,2],
+             '):\n\n\t',
+             'Missing age (n = ', 
+             strobe_table[1,2] - strobe_table[2,2], 
+             ')\n\t',
+             'Missing ASA-PS (n = ', 
+             strobe_table[2,2] - strobe_table[3,2], 
+             ')\n\t',
+             'Missing NCEPOD urgency (n = ', 
+             strobe_table[3,2] - strobe_table[4,2], 
+             ')\n\t',
+             'Missing surgical procedure details (n = ', 
+             strobe_table[4,2] - strobe_table[5,2], 
+             ')\n\t',
+             'Missing malignancy status (n = ', 
+             strobe_table[5,2] - strobe_table[6,2], 
+             ')\n\t',
+             'Missing 30-day mortality outcome (n = ',
+             strobe_table[6,2] - strobe_table[7,2],
+             ')')
+c2 <- ''
+
+
+ndf <- create_node_df(
+  n = 6,
+  label = c(a1, b1, c1, #Column 1
+            a2, b2, c2), #Column 2
+  style = c('solid', 'invis', 'solid', #Column 1
+            'invis', 'solid', 'invis'), #Column 2
+  shape = c('box', 'point', 'box', #Column 1 
+            'plaintext', 'box', 'point'), #Column 2
+  width = c(3, 0.001, 3, #Column 1
+            2, 4, 0.001), #Column 2
+  height = c(1, 0.001, 1, #Column 1
+             1, 2, 0.001), #Column 2
+  fontsize = c(rep(14, 6)),
+  fontname = c(rep('Helvetica', 6)),
+  penwidth = 1.5,
+  fixedsize = 'true')
+
+edf <- create_edge_df(
+  from = c(1, 2, #Column 1
+           4, 5, #Column 2
+           2 #Horizontals
+           ),
+  to = c(2, 3, #Column 1
+         5, 6, #Column 2
+         5 #Horizontals
+         ),
+  arrowhead = c('none', 'normal', #Column 1
+                'none', 'none', #Column 2
+                'normal' #Horizontals
+                ),
+  color = c('black', 'black', #Column 1
+            '#00000000', '#00000000', #Column 2
+            'black' #Horizontals
+            ),
+  constraint = c(rep('true', 4), #Columns
+                 rep('false', 1) #Horizontals
+                 )
+)
+  
+g <- create_graph(ndf,
+                  edf,
+                  attr_theme = NULL)
+
+#render_graph(g)
+
+export_graph(g, file_name = "figures/DescEpi_Fig5_1_strobe.png", width = 1600, height = 1200)
+
+export_graph(g, file_name = "figures/DescEpi_Fig5_1_strobe.pdf")
+
+knitr::include_graphics("figures/DescEpi_Fig5_1_strobe.png")
+```
+
+The largest proportion (`r nrow(patients_clean %>% filter(country == "UK"))/nrow(patients_clean)*100`%) of data was contributed by sites in the UK (n = `r formatC(nrow(patients_clean %>% filter(country == "UK")), big.mark = ",")`, from `r length(unique(patients_clean %>% filter(country == "UK") %>% select(SiteCode) %>% pull()))` hospitals). Australia (n = `r formatC(nrow(patients_clean %>% filter(country == "Aus")), big.mark = ",")`, `r nrow(patients_clean %>% filter(country == "Aus"))/nrow(patients_clean)*100`%) and New Zealand (n = `r formatC(nrow(patients_clean %>% filter(country == "NZ")), big.mark = ",")`, `r nrow(patients_clean %>% filter(country == "NZ"))/nrow(patients_clean)*100`%) contributed a smaller proportion of data, due to fewer sites participating in either country (`r length(unique(patients_clean %>% filter(country == "Aus") %>% select(SiteCode) %>% pull()))` and `r length(unique(patients_clean %>% filter(country == "NZ") %>% select(SiteCode) %>% pull()))` hospitals, respectively). 
+
+A wide range of surgical specialties were represented in the cohort. Table 5-1 summarises the baseline patient demographics for the cohort overall, stratified by country. 
+
+```{r DescEpi_table5-1, echo=FALSE, message=FALSE, warning=FALSE}
+#Table 1
+table5_1_vars <- c("S01Gender",
+                   "S01Age",
+                   "S02OperativeUrgency",
+                   "S03AsaPsClass",
+                   "S02PlannedProcSeverity",
+                   "specialty_recoded",
+                   "S03PastMedicalHistoryCoronaryArteryDisease",
+                   "S03PastMedicalHistoryCongestiveCardiacFailure",
+                   "S03PastMedicalHistoryMetastaticCancerCurrent",
+                   "S03PastMedicalHistoryDementia",
+                   "S03PastMedicalHistoryCOPD",
+                   "S03PastMedicalHistoryPulmonaryFibrosis",
+                   "Diabetes",
+                   "S03PastMedicalHistoryLiverCirrhosis",
+                   "S03PastMedicalHistoryRenalDisease")
+
+table5_1a <- CreateTableOne(vars = table5_1_vars,
+                            strata = "country",
+                            data = patients_clean)
+table5_1b <- CreateTableOne(vars = table5_1_vars,
+                            data = patients_clean)
+skewed_var <- c("S01Age")
+
+table5_1 <- cbind(print(table5_1b, 
+                        nonnormal = skewed_var, 
+                        printToggle = FALSE,
+                        missing = TRUE,
+                        test = FALSE), 
+                  print(table5_1a, 
+                        nonnormal = skewed_var, 
+                        printToggle = FALSE,
+                        test = FALSE)) 
+table5_1 %>% pander("Table 5-1: Baseline patient demographics stratified by country. For surgical specialty classifications: 'GI' includes colorectal, upper gastrointestinal tract, bariatric and hepato-pancreato-biliary surgery, and 'Other' includes solid organ transplants, ophthalmic, plastic, maxillofacial/dental, ear-nose-throat, endocrine and breast surgery, as well as interventional radiology, interventional cardiology and endoscopic procedures requiring anaesthetic support.")
+```
+
+#### Age distribution
+
+The overall age distribution of the patients in the cohort demonstrated a bimodal distribution with two peaks (Figure 5-2A). However, when stratified by sex, the first peak was clearly due to a large number of young females (Figure 5-2B), likely to be obstetric patients (Figure 5-2C). The median age of the whole cohort was `r median(patients_clean$S01Age)` years (Interquartile Range, IQR = `r quantile(patients_clean$S01Age, 0.25)` to `r quantile(patients_clean$S01Age, 0.75)`).
+
+```{r DescEpi_fig5-2, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=6, fig.cap="Figure 5-2: Age distribution of the patient cohort. (A) The histogram (gray bars) and density plot (black line) of the ages of patients who underwent surgery. Two peaks are seen with the first centered around 30 and the second centered around 70 years of age. (B) When the age distribution was stratified by sex the first peak was mainly due to a large number of young females, and likely to be obstetric, patients. (C) A confirmatory plot of the age distributions stratified by obstetric vs. non-obstetric procedures confirmed this."}
+
+fig5_2a <- ggplot(patients_clean, aes(x = S01Age, y = ..density..)) +
+  geom_histogram(bins = 20, alpha = 0.8, fill = "gray") +
+  stat_density(geom = "line") +
+  scale_x_continuous(breaks = seq(from = 0, to = 110, by = 10)) +
+  labs(x = "Age (years)", y = "Probability density",
+       title = "Overall age distribution") +
+  theme_classic()
+
+fig5_2b <- patients_clean %>% filter(!is.na(S01Gender)) %>% 
+  ggplot(aes(x = S01Age, group = S01Gender, fill = S01Gender)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 20) + 
+  scale_x_continuous(breaks = seq(from = 0, to = 110, by = 10)) +
+  labs(x = "Age (years)", y = "Frequency (n)", 
+       title = "Age distribution by sex",
+       fill = "Sex") +
+  theme_classic() +
+  theme(legend.position = "top")
+
+fig5_2c <- patients_clean %>% filter(!is.na(specialty_recoded)) %>% 
+  mutate(Specialty = ifelse(specialty_recoded == "Obs", "Obstetric", "Non-obstetric")) %>%
+  mutate(Specialty = ordered(Specialty, levels = c("Obstetric", "Non-obstetric"))) %>%
+  ggplot(aes(x = S01Age, group = Specialty, fill = Specialty)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 20) + 
+  scale_x_continuous(breaks = seq(from = 0, to = 110, by = 10)) +
+  labs(x = "Age (years)", y = "Frequency (n)", 
+       title = "Age distribution Obs vs. Non-Obs",
+       fill = "Specialty") +
+  theme_classic() +
+  theme(legend.position = "top")
+  
+plot_grid(fig5_2a,
+          fig5_2b,
+          fig5_2c,
+          labels = c("A", "B", "C"),
+          rows = 2,
+          cols = 2)
+```
+
+The majority of cases were elective surgery (n = `r formatC(nrow(filter(patients_clean, S02OperativeUrgency == "Elective")), big.mark = ",")` [`r nrow(filter(patients_clean, S02OperativeUrgency == "Elective"))/nrow(patients_clean) * 100`%]). Patients underwent procedures of varying complexity, with most patients undergoing Major surgery (n = `r formatC(nrow(patients_clean %>% filter(S02PlannedProcSeverity == "Major")), big.mark = ",")` [`r nrow(patients_clean %>% filter(S02PlannedProcSeverity == "Major"))/nrow(patients_clean) *100`%]). AXA-PPP codes were used to classify surgical complexity [^AXAPPP]. Figure 5-3 illustrates the relative frequencies of operative urgency and surgical complexity within the cohort.
+
+[^AXAPPP]: The reference manual for AXA-PPP Healthcare Specialist Procedure Codes classifies procedures on an ordinal scale of complexity of surgery ranging from Minor to Complex [@noauthor_axa_2016]. This scale has previously been used in the literature to distinguish between simple surgery, likely to cause minimal physiological insults to the patient, from more complex procedures which subject patients to greater stresses [@protopapa_development_2014; @wong_predicting_2017]. Some example procedures and their associated severity codes can be found in *Appendix 6*.
+
+```{r DescEpi_fig5-3, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4, fig.cap="Figure 5-3: Relative frequencies of operative urgency and surgical complexity for patients who underwent surgery within the cohort. (A) The distribution of surgical urgency. (B) The distribution of surgical complexity."}
+fig4_3a <- patients_clean %>% filter(!is.na(S02OperativeUrgency)) %>%
+  ggplot(aes(x = S02OperativeUrgency)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  scale_y_continuous(labels=scales::percent) +
+  labs(x = "Operative urgency",
+       y = "Relative frequencies (%)",
+       title = "Urgency of surgery") +
+  theme_classic()
+
+fig4_3b <- patients_clean %>% filter(!is.na(S02PlannedProcSeverity)) %>%
+  ggplot(aes(x = S02PlannedProcSeverity)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+    scale_y_continuous(labels=scales::percent) +
+  labs(x = "AXA-PPP operative severity",
+       y = "Relative frequencies (%)",
+       title = "Surgical complexity") +
+  theme_classic()
+
+plot_grid(fig4_3a, fig4_3b,
+          labels = c("A", "B"))
+```
+
+#### Preoperative origins and levels of care
+
+The patients presenting for surgery were mostly admitted from home on the day of surgery (n = `r formatC(nrow(patients_clean %>% filter(S02PatientOrigin == "H")), big.mark = ",")` [`r nrow(patients_clean %>% filter(S02PatientOrigin == "H"))/nrow(patients_clean) * 100`%]), i.e. they did not occupy a hospital bed the night before their operation. For the `r formatC(nrow(patients_clean %>% filter(S02PatientOrigin == "I")), big.mark = ",")` patients who were already inpatients at the time of surgery, the median preoperative length of hospital stay was `r patients_clean %>% filter(S02PatientOrigin == "I") %>% pull(S02PreopLOS) %>% median(na.rm = TRUE)` day (IQR = `r patients_clean %>% filter(S02PatientOrigin == "I") %>% pull(S02PreopLOS) %>% quantile(prob = 0.25, na.rm = TRUE)` to `r patients_clean %>% filter(S02PatientOrigin == "I") %>% pull(S02PreopLOS) %>% quantile(prob = 0.75, na.rm = TRUE)` days). A minority of patients were already inpatients for a week or longer (n = `r formatC(nrow(patients_clean %>% filter(S02PreopLOS >= 7)), big.mark = ",")` [`r nrow(patients_clean %>% filter(S02PreopLOS >= 7))/nrow(patients_clean) * 100`%]) by the time they presented to surgery.
+
+The levels of care (according to definitions of critical care published by the Intensive Care Society (ICS) and the Faculty of Intensive Care Medicine (FICM) [@intensive_care_society_levels_2009; @masterson_guidelines_2015]) received by patients prior to surgery were recorded within the dataset (Figure 5-4). Only a small number of the cohort were receiving critical care prior to their surgery &mdash; `r nrow(patients_clean %>% filter(S02LevelOfSupport == 2))` patients (`r nrow(patients_clean %>% filter(S02LevelOfSupport == 2))/nrow(patients_clean) * 100`%) were receiving Level 2 care, and `r nrow(patients_clean %>% filter(S02LevelOfSupport == 3))` patients (`r nrow(patients_clean %>% filter(S02LevelOfSupport == 3))/nrow(patients_clean) * 100`%) were receiving Level 3 care preoperatively.
+
+```{r DescEpi_fig5-4, echo=FALSE, message=FALSE, warning=FALSE, fig.width=4, fig.height=4, fig.cap="Figure 5-4: Levels of care received by patients prior to surgery. The majority of patients were not receiving critical care (defined as Level 2 or Level 3 care) preoperatively."}
+patients_clean %>% filter(!is.na(S02LevelOfSupport)) %>%
+  ggplot(aes(x = S02LevelOfSupport)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+    scale_y_continuous(labels=scales::percent) +
+  labs(x = "Levels of care",
+       y = "Relative frequencies (%)",
+       title = "Levels of care received prior to surgery") +
+  theme_classic()
+```
+
+#### Comorbidities
+
+Information about patients' past medical and drug history was also collected. Coronary artery disease was the most commonly reported, with `r formatC(nrow(patients_clean %>% filter(S03PastMedicalHistoryCoronaryArteryDisease == "Y")), big.mark = ",")` (`r nrow(patients_clean %>% filter(S03PastMedicalHistoryCoronaryArteryDisease == "Y"))/nrow(patients_clean) * 100`%) patients presenting to surgery with that comorbidity. When cardiovascular diseases were considered together, the number of patients who reported any cardiovascular comorbidity (i.e. reporting any one of coronary artery disease, congestive cardiac failure, or cerebrovascular disease including previous strokes and transient ischaemic attacks) was `r formatC(nrow(patients_clean %>% filter(S03PastMedicalHistoryCoronaryArteryDisease == "Y" | S03PastMedicalHistoryCongestiveCardiacFailure == "Y" | S03PastMedicalHistoryStrokeTIA == "Y")), big.mark = ",")` (`r nrow(patients_clean %>% filter(S03PastMedicalHistoryCoronaryArteryDisease == "Y" | S03PastMedicalHistoryCongestiveCardiacFailure == "Y" | S03PastMedicalHistoryStrokeTIA == "Y"))/nrow(patients_clean) * 100`%), almost one-sixth of the cohort.
+
+Hypertension in the cohort was common, with a large proportion of patients were normally receiving antihypertensive drugs prior to surgery (n = `r formatC(nrow(patients_clean %>% filter(S03DrugTreatmentAntiHypertensive == "Y")), big.mark = ",")` [`r nrow(patients_clean %>% filter(S03DrugTreatmentAntiHypertensive == "Y"))/nrow(patients_clean) * 100`]%).
+
+Other relevant cardiovascular medications which patients were receiving prior to surgery included anti-anginal drugs (n = `r formatC(nrow(patients_clean %>% filter(S03DrugTreatmentAntiAnginal == "Y")), big.mark = ",")` [`r nrow(patients_clean %>% filter(S03DrugTreatmentAntiAnginal == "Y"))/nrow(patients_clean) * 100`]%), diuretics (n = `r formatC(nrow(patients_clean %>% filter(S03DrugTreatmentDiureticTreatment == "Y")), big.mark = ",")` [`r nrow(patients_clean %>% filter(S03DrugTreatmentDiureticTreatment == "Y"))/nrow(patients_clean) * 100`]%), and warfarin or other treatment-dose anticoagulation medication (n = `r formatC(nrow(patients_clean %>% filter(S03DrugTreatmentWarfarin == "Y" | S03DrugTreatmentOther == "Y")), big.mark = ",")` [`r nrow(patients_clean %>% filter(S03DrugTreatmentWarfarin == "Y" | S03DrugTreatmentOther == "Y"))/nrow(patients_clean) * 100`]%).
+
+More than a quarter of the patient cohort (n = `r formatC(nrow(patients_clean %>% filter(S03PastMedicalHistoryCOPD == "Y" | S03PastMedicalHistoryPulmonaryFibrosis == "Y" | S03RadiologicalFindingsConsolidation == "Y" | S03RadiologicalFindingsCardiomegaly == "Y" | S03RadiologicalFindingsOtherAbnormality == "Y" | S03Dyspnoea %in% c("OME", "L", "AR"))), big.mark = ",")` [`r nrow(patients_clean %>% filter(S03PastMedicalHistoryCOPD == "Y" | S03PastMedicalHistoryPulmonaryFibrosis == "Y" | S03RadiologicalFindingsConsolidation == "Y" | S03RadiologicalFindingsCardiomegaly == "Y" | S03RadiologicalFindingsOtherAbnormality == "Y" | S03Dyspnoea %in% c("OME", "L", "AR")))/nrow(patients_clean) * 100`%]) reported either comorbid chronic obstructive pulmonary disease, pulmonary fibrosis, symptoms of breathlessness, or abnormal chest X-ray findings prior to surgery.
+
+There were `r nrow(patients_clean %>% filter(S03PastMedicalHistoryMetastaticCancerCurrent == "Y"))` (`r nrow(patients_clean %>% filter(S03PastMedicalHistoryMetastaticCancerCurrent == "Y"))/nrow(patients_clean) * 100`%) patients with active malignancy, and a larger number (n = `r formatC(nrow(patients_clean %>% filter(S03PastMedicalHistoryCancerLast5Yrs == "Y")), big.mark = ",")` [`r nrow(patients_clean %>% filter(S03PastMedicalHistoryCancerLast5Yrs == "Y"))/nrow(patients_clean) * 100`%]) who had previous histories of cancer within the preceding 5 years.
+
+Diabetes mellitus was a comorbidity for `r formatC(nrow(patients_clean %>% filter(Diabetes == "Y")), big.mark = ",")` (`r nrow(patients_clean %>% filter(Diabetes == "Y"))/nrow(patients_clean) * 100`%) patients. Table 5-2 summarises the incidence of different types of diabetes present in the subgroup of patients with diabetes.
+
+```{r DescEpi_table5-2, echo=FALSE, message=FALSE, warning=FALSE}
+patients_clean %>% select(S03Diabetes) %>%
+  filter(!is.na(S03Diabetes)) %>%
+  filter(S03Diabetes != "N") %>%
+  transmute(Diabetes = recode(S03Diabetes,
+                              `1` = "Type 1",
+                              `2I` = "Type 2 (insulin controlled)",
+                              `2O` = "Type 2 (non-insulin glucose lowering drug controlled)",
+                              `2D` = "Type 2 (diet controlled)")) %>%
+  CreateTableOne(data = ., vars = "Diabetes") %>%
+  print(test = FALSE, printToggle = FALSE, noSpaces = TRUE) %>%
+  pander("Table 5-2: Breakdown of diabetic subtypes in patients with comorbid diabetes mellitus.")
+```
+
+The incidences of dementia (n = `r nrow(patients_clean %>% filter(S03PastMedicalHistoryDementia == "Y"))` [`r nrow(patients_clean %>% filter(S03PastMedicalHistoryDementia == "Y"))/nrow(patients_clean) * 100`%]), end-stage renal disease (n = `r nrow(patients_clean %>% filter(S03PastMedicalHistoryRenalDisease == "Y"))` [`r nrow(patients_clean %>% filter(S03PastMedicalHistoryRenalDisease == "Y"))/nrow(patients_clean) * 100`%]) and chronic liver disease (n = `r nrow(patients_clean %>% filter(S03PastMedicalHistoryLiverCirrhosis == "Y"))` [`r nrow(patients_clean %>% filter(S03PastMedicalHistoryLiverCirrhosis == "Y"))/nrow(patients_clean) * 100`%]) were low in the cohort.
+
+#### Preoperative investigations
+
+The cohort study was observational in nature and did not mandate any additional investigations above and beyond what patients would normally have received preoperatively. 
+
+The majority of patients (n = `r formatC(nrow(patients_clean %>% filter(S03EcgFindings %in% c("4E", "AF>90", "AF6090", "NOR", "O", "QW", "ST"))), big.mark = ",")` [`r nrow(patients_clean %>% filter(S03EcgFindings %in% c("4E", "AF>90", "AF6090", "NOR", "O", "QW", "ST")))/nrow(patients_clean) * 100`%]) received electrocardiogram (ECG) recordings preoperatively, with the majority of these being normal sinus rhythm (Table 5-3).
+
+```{r DescEpi_table5-3, echo=FALSE, message=FALSE, warning=FALSE}
+patients_clean %>% select(S03EcgFindings) %>%
+  filter(!is.na(S03EcgFindings)) %>%
+  filter(S03EcgFindings != "ND") %>%
+  transmute(ECG = recode_factor(S03EcgFindings, 
+                                .ordered = TRUE,
+                                `NOR` = "Normal sinus rhythm",
+                                `AF6090` = "Atrial fibrillation (60-90 bpm)",
+                                `AF>90` = "Atrial fibrillation (>90 bpm)",
+                                `QW` = "Q-waves",
+                                `4E` = ">4 ectopics",
+                                `ST` = "ST- or T-wave changes",
+                                `O` = "Other abnormal rhythms")) %>%
+  CreateTableOne(data = ., vars = "ECG") %>%
+  print(test = FALSE, printToggle = FALSE, noSpaces = TRUE) %>%
+  pander("Table 5-3: Breakdown of electrocardiogram (ECG) findings in patients who had ECGs available preoperatively. 'bpm' = beats per minute.")
+```
+
+Blood test results for the following biochemistry and haematology investigations were recorded if available: serum creatinine, serum urea, plasma sodium, plasma potassium, haemoglobin concentration, white cell count, and HbA1C [^BloodResults]. Results for at least one of these blood investigations were available for `r formatC(nrow(patients_clean %>% filter(!is.na(S03Creatinine) | !is.na(S03Urea) | !is.na(S03Hb) | !is.na(S03Na) | !is.na(S03K) | !is.na(S03WhiteCellCountWcc) | !is.na(S03HBA1c))), big.mark = ",")` patients (`r nrow(patients_clean %>% filter(!is.na(S03Creatinine) | !is.na(S03Urea) | !is.na(S03Hb) | !is.na(S03Na) | !is.na(S03K) | !is.na(S03WhiteCellCountWcc) | !is.na(S03HBA1c)))/nrow(patients_clean) * 100`%). The distribution of values for these tests, if available, are shown in Figure 5-5.
+
+[^BloodResults]: When calculating preoperative predicted mortality risks as above in Table 5-2, some blood test result values were required in order to compute the physiological score component of P-POSSUM. For patients whose blood results were not available, I imputed normal range values instead. P-POSSUM converts continuous result variables into categorical ranges and then assigns a severity score based on the degree to which the results deviate away from normal. Blood investigations are often not ordered for patients with low clinician-anticipated risk, and therefore it is a common assumption to make that blood results would likely have been normal, had they been ordered for these patients.
+
+```{r DescEpi_fig5-5, echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=8, fig.cap="Figure 5-5: Histograms for the preoperative blood test results of patients who had blood test investigations available before their operation. Hb = haemoglobin; WCC = White Cell Count; HbA1C = haemoglobin A1c."}
+#patients_clean %>% select(S03Creatinine:S03HBA1c) %>%
+#  gather(key = "Test", value = "Value") %>%
+#  mutate(Test = recode_factor(Test,
+#                              `S03Na` = "Sodium (mmol/L)",
+#                              `S03K` = "Potassium (mmol/L)",
+#                              `S03Creatinine` = "Creatinine (μmol/L)",
+#                              `S03Urea` = "Urea (mmol/L)",
+#                              `S03Hb` = "Hb (g/L)",
+#                              `S03WhiteCellCountWcc` = "WCC (10^9 cells/L)",
+#                              `S03HBA1c` = "HbA1C (mmol/mol)")) %>%
+#  ggplot(aes(x = Value, y = Test)) +
+#  geom_density_ridges(alpha = 0.8) +
+#  labs(y = "Probability density") +
+#  xlim(0, 200) +
+#  theme_classic()
+
+plot_grid(
+patients_clean %>% 
+  ggplot(aes(x = S03Na, y = ..density..)) +
+  geom_histogram() +
+  labs(y = "Density",
+       x = "Sodium (mmol/L)"),
+
+patients_clean %>% 
+  ggplot(aes(x = S03K, y = ..density..)) +
+  geom_histogram() +
+  labs(y = "Density",
+       x = "Potassium (mmol/L)"),
+
+patients_clean %>% 
+  ggplot(aes(x = S03Creatinine, y = ..density..)) +
+  geom_histogram() +
+  labs(y = "Density",
+       x = "Creatinine (μmol/L)"),
+
+patients_clean %>% 
+  ggplot(aes(x = S03Urea, y = ..density..)) +
+  geom_histogram() +
+  labs(y = "Density",
+       x = "Urea (mmol/L)"),
+
+patients_clean %>% 
+  ggplot(aes(x = S03Hb, y = ..density..)) +
+  geom_histogram() +
+  labs(y = "Density",
+       x = "Hb (g/L)"),
+
+patients_clean %>% 
+  ggplot(aes(x = S03WhiteCellCountWcc, y = ..density..)) +
+  geom_histogram() +
+  labs(y = "Density",
+       x = "WCC (10^9 cells/L)"),
+
+patients_clean %>% 
+  ggplot(aes(x = S03HBA1c, y = ..density..)) +
+  geom_histogram() +
+  labs(y = "Density",
+       x = "HbA1C (mmol/mol)"),
+
+labels = c("A", "B", "C", "D", "E", "F", "G"),
+cols = 2
+
+)
+```
+
+#### Operative factors
+
+The majority of surgery started during the daytime between 08:00hrs and 16:00hrs (n = `r formatC(nrow(patients_clean %>% filter(S02TimeOfSurgeryStartIncision %in% c(8, 12))), big.mark = ",")` [`r nrow(patients_clean %>% filter(S02TimeOfSurgeryStartIncision %in% c(8, 12)))/nrow(patients_clean) * 100`%], Figure 5-6), with a smaller proportion occuring in the evening between 16:00hrs to 20:00hrs (n = `r formatC(nrow(patients_clean %>% filter(S02TimeOfSurgeryStartIncision %in% c(16))), big.mark = ",")` [`r nrow(patients_clean %>% filter(S02TimeOfSurgeryStartIncision %in% c(16)))/nrow(patients_clean) * 100`%]), and the remainder occurring overnight between 20:00hrs and 08:00hrs (n = `r formatC(nrow(patients_clean %>% filter(S02TimeOfSurgeryStartIncision %in% c(20, 0, 6))), big.mark = ",")` [`r nrow(patients_clean %>% filter(S02TimeOfSurgeryStartIncision %in% c(20, 0, 6)))/nrow(patients_clean) * 100`%]). 
+
+```{r DescEpi_fig5-6, echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=4, fig.cap="Figure 5-6: Surgical start times."}
+patients_clean %>% filter(!is.na(S02TimeOfSurgeryStartIncision)) %>%
+  mutate(S02TimeOfSurgeryStartIncision = recode_factor(S02TimeOfSurgeryStartIncision,
+                                                `8` = "08:00-12:00",
+                                                `12` = "12:00-16:00",
+                                                `16` = "16:00-20:00",
+                                                `20` = "20:00-00:00",
+                                                `0` = "00:00-04:00",
+                                                `4` = "04:00-08:00",
+                                                .ordered = TRUE)) %>%
+  ggplot(aes(x = reorder(S02TimeOfSurgeryStartIncision, desc(S02TimeOfSurgeryStartIncision)))) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+    scale_y_continuous(labels=scales::percent) +
+  labs(x = "Time of surgical incision (24hr clock)\n",
+       y = "Relative frequencies (%)",
+       title = "Surgical start times") +
+  theme_classic() +
+  coord_flip()
+```
+
+The modalities of anaesthesia delivered during the operation were recorded for each case and the majority of patients received General Anaesthesia (n = `r formatC(nrow(patients_clean %>% filter(S04AnaestheticTechniqueGeneral == TRUE)), big.mark = ",")` [`r nrow(patients_clean %>% filter(S04AnaestheticTechniqueGeneral == TRUE))/nrow(patients_clean %>% filter(!is.na(S04AnaestheticTechniqueGeneral))) * 100`%]) either alone, or in conjunction with another mode of anaesthesia (Table 5-4). A large proportion of patients underwent central neuraxial blockade (i.e. either Spinal or Epidural Anaesthesia) without General Anaesthesia as the primary mode of anaesthesia (n = `r formatC(nrow(patients_clean %>% filter((S04AnaestheticTechniqueSpinal == TRUE | S04AnaestheticTechniqueSpinalEpidural == TRUE | S04AnaestheticTechniqueSpinalEpidural == TRUE) & S04AnaestheticTechniqueGeneral == FALSE)), big.mark = ",")` [`r nrow(patients_clean %>% filter((S04AnaestheticTechniqueSpinal == TRUE | S04AnaestheticTechniqueSpinalEpidural == TRUE | S04AnaestheticTechniqueSpinalEpidural == TRUE) & S04AnaestheticTechniqueGeneral == FALSE))/nrow(patients_clean %>% filter(!is.na(S04AnaestheticTechniqueGeneral))) * 100`%]), with a much smaller proportion undergoing peripheral nerve block (regional anaesthesia) without General Anaesthesia (n = `r formatC(nrow(patients_clean %>% filter(S04AnaestheticTechniqueRegional == TRUE & S04AnaestheticTechniqueGeneral == FALSE)), big.mark = ",")` [`r nrow(patients_clean %>% filter(S04AnaestheticTechniqueRegional == TRUE & S04AnaestheticTechniqueGeneral == FALSE))/nrow(patients_clean %>% filter(!is.na(S04AnaestheticTechniqueGeneral))) * 100`%])).
+
+```{r DescEpi_table5-4, echo=FALSE, message=FALSE, warning=FALSE}
+patients_clean %>% 
+  select(S04AnaestheticTechniqueGeneral:S04AnaestheticTechniqueLocalInfiltration) %>%
+  rename(`General anaesthesia` = S04AnaestheticTechniqueGeneral,
+         `Deep sedation` = S04AnaestheticTechniqueSedationDeep,
+         `Light sedation` = S04AnaestheticTechniqueSedationLight,
+         `Epidural` = S04AnaestheticTechniqueEpidural,
+         `Spinal` = S04AnaestheticTechniqueSpinal,
+         `Combined spinal-epidural` = S04AnaestheticTechniqueSpinalEpidural,
+         `Peripheral nerve/regional block` = S04AnaestheticTechniqueRegional,
+         `Local anaesthetic infiltration` = S04AnaestheticTechniqueLocalInfiltration) %>%
+  CreateTableOne(data = .) %>%
+  print(test = FALSE, printToggle = FALSE, noSpaces = TRUE) %>%
+  pander("Table 5-4: Breakdown anaesthetic modalities in surgical cases. The total percentage does not sum to 100% as patients could receive more than one anaesthetic modality during their surgery, e.g. General Anaesthesia plus Spinal Anaesthesia.")
+```
+
+### Risk profile
+
+The baseline risk profile of patients presenting for surgery were assessed using ASA-PS grades (Figure 5-7A). The majority of patients were ASA I (n = `r formatC(nrow(patients_clean %>% filter(S03AsaPsClass == "I")), big.mark = ",")` [`r nrow(patients_clean %>% filter(S03AsaPsClass == "I"))/nrow(patients_clean) * 100`%]) or ASA II patients (n = `r formatC(nrow(patients_clean %>% filter(S03AsaPsClass == "II")), big.mark = ",")` [`r nrow(patients_clean %>% filter(S03AsaPsClass == "II"))/nrow(patients_clean) * 100`%]), traditionally considered to be lower risk based on their medical history. Patients classed as ASA III or higher (n = `r formatC(nrow(patients_clean %>% filter(S03AsaPsClass %in% c("III", "IV", "V"))), big.mark = ",")`) comprised `r nrow(patients_clean %>% filter(S03AsaPsClass %in% c("III", "IV", "V")))/nrow(patients_clean) * 100`% of the cohort.
+
+```{r DescEpi_fig5-7, echo=FALSE, message=FALSE, warning=FALSE, fig.width=12, fig.height=8, fig.cap="Figure 5-7: Risk distribution of patients in the cohort. (A) The distribution of American Society of Anesthesiologists Physical Status (ASA-PS) grades. (B) Histograms showing the distibution of preoperative predicted mortality as computed by the Portsmouth-Physiology and Operative Severity Score for the enUmeration of Mortality (PPOSSUM), Surgical Risk Scale (SRS), and Surgical Outcome Risk Tool (SORT) risk assessment tools. (C) Pair-wise scatter plots showing the relationship between each risk tool prediction, with Pearson's correlation coefficient, r, indicating the degree of agreement between each prediction tool."}
+fig5_7a <- patients_clean %>% filter(!is.na(S03AsaPsClass)) %>%
+  ggplot(aes(x = S03AsaPsClass)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+    scale_y_continuous(labels=scales::percent) +
+  labs(x = "ASA-PS grades",
+       y = "Relative frequencies (%)",
+       title = "ASA-PS grades") +
+  theme_classic()
+
+fig5_7b <- patients_clean %>%
+  select(`PPOSSUM`, `SORT`, `SRS`) %>%
+  gather(key = `Risk Model`, value = Probability) %>%
+  ggplot() +
+  geom_histogram(aes(Probability)) +
+  #geom_density_ridges(aes(y = `Risk Model`, x = Probability), 
+  #                    stat = "binline", bins = 20, scale = 0.95, draw_baseline = TRUE) +
+  scale_x_log10(labels=scales::percent) + facet_grid(rows = vars(`Risk Model`)) +
+  #geom_jitter(aes(y = `Risk Model`, x = Probability), 
+  #            alpha = 0.2, width = 0.025) +
+  #scale_x_continuous(labels=scales::percent) +
+  labs(y = "Frequency (n)", x = "Predicted probability of mortality",
+       title = "Risk distibution") +
+  theme_classic()
+
+fig5_7_upper <- plot_grid(fig5_7a, fig5_7b,
+                          labels = c("A", "B"),
+                          rel_widths = c(1, 1),
+                          rel_heights = c(1, 1))
+
+fig5_7c1 <- patients_clean %>%
+  select(`PPOSSUM`, `SORT`) %>%
+  ggplot(aes(x = SORT, y = PPOSSUM)) +
+  geom_point(alpha = 0.5) +
+  labs(title = paste0("Pearson's r = ", round(cor(patients_clean$PPOSSUM, patients_clean$SORT), digits = 2))) +
+  scale_x_log10(labels=scales::label_percent(accuracy = 1L), breaks = c(0, 0.01, 0.1, 1)) +
+  scale_y_log10(labels=scales::label_percent(accuracy = 1L), breaks = c(0, 0.01, 0.1, 1)) +
+  theme_classic()
+
+fig5_7c2 <- patients_clean %>%
+  select(`SRS`, `SORT`) %>%
+  ggplot(aes(x = SORT, y = SRS)) +
+  geom_point(alpha = 0.5) +
+  labs(title = paste0("Pearson's r = ", round(cor(patients_clean$SRS, patients_clean$SORT), digits = 2))) +
+  scale_x_log10(labels=scales::label_percent(accuracy = 1L), breaks = c(0, 0.01, 0.1, 1)) +
+  scale_y_log10(labels=scales::label_percent(accuracy = 1L), breaks = c(0, 0.01, 0.1, 1)) +
+  theme_classic()
+
+fig5_7c3 <- patients_clean %>%
+  select(`PPOSSUM`, `SRS`) %>%
+  ggplot(aes(x = SRS, y = PPOSSUM)) +
+  geom_point(alpha = 0.5) +
+  labs(title = paste0("Pearson's r = ", round(cor(patients_clean$PPOSSUM, patients_clean$SRS), digits = 2))) +
+  scale_x_log10(labels=scales::label_percent(accuracy = 1L), breaks = c(0, 0.01, 0.1, 1)) +
+  scale_y_log10(labels=scales::label_percent(accuracy = 1L), breaks = c(0, 0.01, 0.1, 1)) +
+  theme_classic()
+
+fig5_7_lower <- plot_grid(fig5_7c1, fig5_7c2, fig5_7c3,
+                          labels = c("", "", ""), ncol = 3,
+                          rel_widths = c(1, 1, 1),
+                          rel_heights = c(1, 1, 1))
+
+fig5_7 <- plot_grid(fig5_7_upper, fig5_7_lower, ncol = 1,
+                    labels = c("", "C"),
+                    rel_heights = c(1, 1, 1))
+
+fig5_7
+
+ggsave(filename = "figures/Fig5_7.png", plot = fig5_7, dpi = 300, width = 12, height = 8, type = "cairo")
+```
+
+The predicted risk of patients conditional on baseline risk factors were computed using the Portsmouth-Physiology and Operative Severity Score for the enUmeration of Mortality (P-POSSUM), Surgical Risk Scale (SRS), and Surgical Outcome Risk Tool (SORT), showing most patients in the cohort to be low risk (Figure 5-7B). Using these predicted risks, the proportion of patients who would have been considered *high-risk*  (i.e. preoperative predicted mortality risk &ge;5%) according to definitions published by NCEPOD [@findlay_knowing_2011] and the Royal College of Surgeons [@lees_high-risk_2018], were `r nrow(patients_clean %>% filter(PPOSSUM >= 0.05))/nrow(patients_clean) * 100`%, `r nrow(patients_clean %>% filter(SORT >= 0.05))/nrow(patients_clean) * 100`%, and `r nrow(patients_clean %>% filter(SRS >= 0.05))/nrow(patients_clean) * 100`%, based on P-POSSUM, SORT and SRS, respectively. Table 5-5 shows a further breakdown of the frequency of preoperative predicted risks based on these models by different risk ranges. There was variable agreement between the predicted risks using the different tools (Figure 5-7C), with Pearson correlation coefficients of `r round(cor(patients_clean$PPOSSUM, patients_clean$SORT), digits = 2)` between P-POSSUM and SORT, `r round(cor(patients_clean$PPOSSUM, patients_clean$SRS), digits = 2)` between P-POSSUM and SRS, and `r round(cor(patients_clean$SRS, patients_clean$SORT), digits = 2)` between SRS and SORT.
+
+```{r DescEpi_table5-5, echo=FALSE, message=FALSE, warning=FALSE}
+patients_clean %>% select(PPOSSUM, SORT, SRS) %>%
+  mutate_at(.vars = vars(PPOSSUM, SORT, SRS), .funs = funs(cut(., breaks = c(0, 0.01, 0.025, 0.05, 0.10, 0.5, 1), right = FALSE))) %>%
+  gather(key = `Risk_Model`, value = Probability) %>%
+  CreateTableOne(data = ., vars = "Probability", strata = "Risk_Model") %>%
+  print(test = FALSE, printToggle = FALSE, noSpaces = TRUE) %>%
+  pander("Table 5-5: Proportion of patients in each mortality risk group according to P-POSSUM, SORT and SRS computed mortality.")
+```
+
+Due to the high frequency of patients concentrated at the lower spectrum of risk. Re-plotting the distribution of preoperative predicted risks from Figure 5-4B using a log(probability) scale allows for a clearer visualisation of the full spectrum of patient risks (Figure 5-8). The predicted risk of any individual patient would therefore differ depending on which risk prediction model was used to compute risk. The risk distributions of all three countries were comparable (Figure 5-9).
+
+```{r DescEpi_fig5-8, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4, fig.cap="Figure 5-8: Risk distribution of patients in the cohort replotted as a jitter plot with a log(probability) scale and coloured by ASA-PS grade. ASA-PS = American Society of Anesthesiology Physical Status; P-POSSUM = Portsmouth-Physiology and Operative Severity Score for the enUmeration of Mortality; SRS = Surgical Risk Scale; SORT = Surgical Outcome Risk Tool; NA = ASA-PS grade not reported."}
+fig5_8 <- patients_clean %>%
+  select(`PPOSSUM`, `SORT`, `SRS`, S03AsaPsClass) %>%
+  gather(key = `Risk Model`, value = Probability, -S03AsaPsClass) %>%
+  mutate(`Risk Model` = recode(`Risk Model`, `PPOSSUM` = "P-POSSUM")) %>%
+  ggplot() +
+  geom_jitter(aes(y = `Risk Model`, x = Probability, col = S03AsaPsClass),
+              alpha = 0.2) + 
+  scale_x_log10() +
+  labs(y = "Risk Model", x = "Predicted probability of mortality",
+       title = "Risk distributions",
+       col = "ASA-PS grade") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+fig5_8
+
+ggsave(filename = "figures/Fig5_8.png", plot = fig5_8, dpi = 300, width = 8, height = 4, type = "cairo")
+```
+
+```{r DescEpi_fig5-9, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=6, fig.cap="Figure 5-9: Histograms depicting the probability distributions of patients in the cohort by country and risk prediction tool. The risk profiles of each country appeared similar. Risk distributions depended upon the risk model used to calculate predicted mortality risk. PPOSSUM = Portsmouth-Physiology and Operative Severity Score for the enUmeration of Mortality; SRS = Surgical Risk Scale; SORT = Surgical Outcome Risk Tool."}
+patients_clean %>%
+  select(`PPOSSUM`, `SORT`, `SRS`, S03AsaPsClass, country) %>%
+  gather(key = `Risk Model`, value = Probability, -S03AsaPsClass, -country) %>%
+  ggplot() +
+  geom_density_ridges(aes(y = country, x = Probability), stat = "binline", bins = 20, scale = 0.95, draw_baseline = TRUE) +
+  #geom_density_ridges(aes(y = country, x = Probability), alpha = 0.2) +
+  scale_x_log10() + facet_grid(rows = vars(`Risk Model`)) +
+  labs(y = "Risk Model", x = "Predicted probability of mortality",
+       title = "Risk distibutions",
+       col = "ASA-PS grade") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+### Critical care admission
+
+A total of `r formatC(nrow(patients_clean %>% filter(CCU_adm == TRUE)), big.mark = ",")` patients (`r nrow(patients_clean %>% filter(CCU_adm == TRUE))/nrow(patients_clean) * 100`%) were admitted immediately to critical care after surgery. Of these, `r formatC(nrow(patients_clean %>% filter(S07PlannedDayOfSurgeryIcuHduPacuAdmission == "Y")), big.mark = ",")` (`r nrow(patients_clean %>% filter(S07PlannedDayOfSurgeryIcuHduPacuAdmission == "Y"))/nrow(patients_clean %>% filter(CCU_adm == TRUE)) * 100`%) were planned admissions, and `r nrow(patients_clean %>% filter(S07UnplannedDayOfSurgeryIcuHduPacuAdmission == "Y"))` (`r nrow(patients_clean %>% filter(S07UnplannedDayOfSurgeryIcuHduPacuAdmission == "Y"))/nrow(patients_clean %>% filter(CCU_adm == TRUE)) * 100`%) were unplanned admissions.
+
+A number (n = `r nrow(patients_clean %>% filter(S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y"))`) of patients were admitted to critical care on a later date after their surgery to manage complications, representing `r nrow(patients_clean %>% filter(S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y"))/nrow(patients_clean) * 100`% of all patients undergoing surgery.
+
+Patients who were admitted immediately to critical care postoperatively tended to be older, with a higher ASA-PS grade, undergoing surgery with greater associated severity, and with higher NCEPOD urgency categories (Table 5-6). The proportion of patients who were admitted immediately to critical care in the UK, New Zealand and Australia were `r (table(patients_clean$CCU_adm, patients_clean$country) %>% prop.table(2))["TRUE", "UK"] * 100`%, `r (table(patients_clean$CCU_adm, patients_clean$country) %>% prop.table(2))["TRUE", "NZ"] * 100`% and `r (table(patients_clean$CCU_adm, patients_clean$country) %>% prop.table(2))["TRUE", "Aus"] * 100`%, respectively.
+
+```{r DescEpi_table5-6, echo=FALSE, message=FALSE, warning=FALSE}
+patients_clean %>%
+  CreateTableOne(data = ., vars = c("S01Age", "S03AsaPsClass", "Specialty", "S02PlannedProcSeverity", "S02OperativeUrgency"), 
+                 strata = "CCU_adm") %>%
+  print(test = TRUE, printToggle = FALSE, noSpaces = TRUE) %>%
+  pander("Table 5-6: Differences in baseline patient and surgical characteristics between patients who were admitted immediately to critical care and patients who were admitted to the ward after their surgery.")
+
+#patients_clean %>% filter(!is.na(CCU_adm)) %>% 
+#  group_by(country, CCU_adm) %>% 
+#  summarise(count = n()) %>% 
+#  mutate(perc = count/sum(count)) %>%
+#  filter(CCU_adm == TRUE)
+```
+
+```{r DescEpi_fig5-10, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8, fig.cap="Figure 5-10: Variation in critical care admission by (A) Age; (B) ASA-PS Grade; (C) Surgical severity as defined by AXA-PPP procedure code; (D) NCEPOD urgency classification; (E) Surgical specialty. In (A) each point represents an individual patient, the position of the points have been jittered to compensate for overplotting. In (B) to (E) stacked column charts have been standardised to 100% for each category to allow visual comparison between categories."}
+age_plot <- patients_clean %>%
+  filter(!is.na(CCU_adm)) %>%
+  ggplot(aes(x = S01Age, y = as.numeric(CCU_adm))) +
+  geom_jitter(alpha = 0.3) +
+  geom_smooth() +
+  labs(title = "Admission vs Age",
+       x = "Age (years)",
+       y = "Immediate Admission") +
+  scale_y_continuous(breaks = c(0, 1), labels = c("FALSE", "TRUE")) +
+  theme_classic()
+
+asa_plot <- patients_clean %>%
+  filter(!is.na(CCU_adm) & !is.na(S03AsaPsClass)) %>%
+  group_by(S03AsaPsClass, CCU_adm) %>% 
+  summarise(count = n()) %>% 
+  mutate(perc = count/sum(count)) %>%
+  ggplot(aes(x = S03AsaPsClass, y = perc, fill = CCU_adm)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(perc * 100, 1), "%")), position = position_stack(vjust = 0.5), size = 2) + 
+  labs(title = "Admission vs ASA-PS Grade",
+       x = "ASA-PS Grade",
+       y = "Percentage (%)") +
+  scale_y_continuous(labels = scales::percent) +
+  theme_classic()
+
+specialty_plot <- patients_clean %>%
+  filter(!is.na(CCU_adm) & !is.na(specialty_recoded)) %>%
+  mutate(Specialty = recode_factor(specialty_recoded,
+                                   `Other` = "Other",
+                                   `Obs` = "Obstetrics",
+                                   `Ortho` = "Orthopaedics",
+                                   `Gynaecology-Urology` = "Gynaecology/Urology",
+                                   `GI` = "Gastrointestinal",
+                                   `Neuro-Spine` = "Neurosurgery/Spine",
+                                   `Vascular` = "Vascular",
+                                   `Thoracic` = "Cardiac/Thoracic",
+                                   .ordered = TRUE)) %>%
+  group_by(Specialty, CCU_adm) %>% 
+  summarise(count = n()) %>% 
+  mutate(perc = count/sum(count)) %>%
+  ggplot(aes(x = Specialty, y = perc, fill = CCU_adm)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(perc * 100, 1), "%")), position = position_stack(vjust = 0.5), size = 2) +
+  labs(title = "Admission vs Specialty",
+       x = "Surgical Specialty",
+       y = "Percentage (%)",
+       fill = "Immediate Critical Care Admission") +
+  scale_y_continuous(labels = scales::percent) +
+  theme_classic() +
+  coord_flip()
+
+severity_plot <- patients_clean %>%
+  filter(!is.na(CCU_adm) & !is.na(S02PlannedProcSeverity)) %>%
+  group_by(S02PlannedProcSeverity, CCU_adm) %>% 
+  summarise(count = n()) %>% 
+  mutate(perc = count/sum(count)) %>%
+  ggplot(aes(x = S02PlannedProcSeverity, y = perc, fill = CCU_adm)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(perc * 100, 1), "%")), position = position_stack(vjust = 0.5), size = 2) +
+  labs(title = "Admission vs Surgical Severity",
+       x = "Surgical Severity",
+       y = "Percentage (%)") +
+  scale_y_continuous(labels = scales::percent) +
+  theme_classic()
+
+urgency_plot <- patients_clean %>%
+  filter(!is.na(CCU_adm) & !is.na(S02OperativeUrgency)) %>%
+  group_by(S02OperativeUrgency, CCU_adm) %>% 
+  summarise(count = n()) %>% 
+  mutate(perc = count/sum(count)) %>%
+  ggplot(aes(x = S02OperativeUrgency, y = perc, fill = CCU_adm)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(perc * 100, 1), "%")), position = position_stack(vjust = 0.5), size = 2) +
+  labs(title = "Admission vs Urgency",
+       x = "NCEPOD Urgency",
+       y = "Percentage (%)") +
+  scale_y_continuous(labels = scales::percent) +
+  theme_classic()
+
+ccu_adm_plot_row1 <- plot_grid(age_plot,
+                          asa_plot + theme(legend.position = "none"),
+                          severity_plot + theme(legend.position = "none"),
+                          urgency_plot + theme(legend.position = "none"),
+                          nrow = 2,
+                          ncol = 2,
+                          align = "hv",
+                          labels = c("A", "B", "C", "D"))
+
+ccu_adm_plot <- plot_grid(ccu_adm_plot_row1, 
+                          specialty_plot + theme(legend.position = "bottom"),
+                          nrow = 2,
+                          rel_heights = c(2, 1.1),
+                          labels = c("", "E")) 
+
+ccu_adm_plot
+```
+
+Despite recommendations, high-risk patients (those with &ge;5% predicted mortality) were not consistently being directly admitted to critical care following surgery (Figure 5-11). Although a larger proportion of high-risk than low-risk patients were admitted immediately to critical care, only about a third of high-risk patients were actually admitted. Of the `r nrow(patients_clean %>% filter(PPOSSUM >= 0.05))` patients with P-POSSUM predicted mortality of &ge;5%, only `r nrow(patients_clean %>% filter(PPOSSUM >= 0.05 & CCU_adm == TRUE))` (`r nrow(patients_clean %>% filter(PPOSSUM >= 0.05 & CCU_adm == TRUE))/nrow(patients_clean %>% filter(PPOSSUM >= 0.05)) * 100`%) were admitted to critical care immediately postoperatively. Similarly, only `r nrow(patients_clean %>% filter(SORT >= 0.05 & CCU_adm == TRUE))/nrow(patients_clean %>% filter(SORT >= 0.05)) * 100`% (`r nrow(patients_clean %>% filter(SORT >= 0.05 & CCU_adm == TRUE))` of `r nrow(patients_clean %>% filter(SORT >= 0.05))`) of patients defined as high-risk using SORT, and `r nrow(patients_clean %>% filter(SRS >= 0.05 & CCU_adm == TRUE))/nrow(patients_clean %>% filter(SRS >= 0.05)) * 100`% (`r nrow(patients_clean %>% filter(SRS >= 0.05 & CCU_adm == TRUE))` of `r nrow(patients_clean %>% filter(SRS >= 0.05))`) of SRS-defined high-risk patients were directly admitted to critical care.
+
+In contrast, a substantial proportion of those patients admitted directly to critical care (n = `r formatC(nrow(patients_clean %>% filter(CCU_adm == TRUE)), big.mark = ",")`) were actually low-risk. This finding was true using predicted risks according to P-POSSUM (n = `r formatC(nrow(patients_clean %>% filter(PPOSSUM < 0.05 & CCU_adm == TRUE)), big.mark = ",")` [`r nrow(patients_clean %>% filter(PPOSSUM < 0.05 & CCU_adm == TRUE))/nrow(patients_clean %>% filter(CCU_adm == TRUE)) * 100`%]), SORT (n = `r formatC(nrow(patients_clean %>% filter(SORT < 0.05 & CCU_adm == TRUE)), big.mark = ",")` [`r nrow(patients_clean %>% filter(SORT < 0.05 & CCU_adm == TRUE))/nrow(patients_clean %>% filter(CCU_adm == TRUE)) * 100`%]) and SRS (n = `r formatC(nrow(patients_clean %>% filter(SRS < 0.05 & CCU_adm == TRUE)), big.mark = ",")` [`r nrow(patients_clean %>% filter(SRS < 0.05 & CCU_adm == TRUE))/nrow(patients_clean %>% filter(CCU_adm == TRUE)) * 100`%]), although actual proportions varied by risk tool.
+
+Although admission rates to critical care were higher in Australia and New Zealand than in the UK (Figure 5-11B), the finding that the majority of high-risk patients were not admitted directly to critical care postoperatively was consistent across the three countries.
+
+```{r DescEpi_fig5-11, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=10, fig.cap="Figure 5-11: Critical care admissions (blue) in patients of high- and low-predicted mortality risks in the overall cohort (A), and in each country (B). Mortality risks were computed using P-POSSUM, SORT and SRS. Although guidelines recommend that patients with predicted mortality of &ge;5% should be admitted to critical care immediately after surgery, only approximately one-third were in this cohort. A substantial proportion of those admitted to critical care postoperatively were low-risk patients with <5% predicted mortality."}
+#patients_clean %>% select(PPOSSUM, SORT, SRS, CCU_adm) %>%
+#  filter(!is.na(CCU_adm)) %>%
+#  mutate_at(vars(PPOSSUM, SORT, SRS),
+#            funs(cut(., breaks = c(0, 0.05, 1), right = FALSE))) %>%
+#  gather(key = "Risk_model", value = "Risk", -CCU_adm) %>%
+#  mutate(Risk = recode(Risk, 
+#                       `[0,0.05)` = "0 to 5%",
+#                       `[0.05,1)` = "5% or more"),
+#         Risk_model = recode(Risk_model,
+#                             `PPOSSUM` = "P-POSSUM")) %>%
+#  #group_by(CCU_adm, Risk_model, Risk) %>%
+#  #summarise(count = n()) %>%
+#  ggplot(data = ., aes(fill = CCU_adm, x = Risk)) +
+#  geom_bar() +
+#  facet_wrap(~Risk_model) +
+#  labs(title = "Critical care admissions in high-risk patients",
+#       x = "Predicted risk of mortality",
+#       y = "Frequency (n)",
+#       fill = "Immediate critical care admission") +
+#  theme_classic() +
+#  theme(legend.position = "bottom")
+plot_grid(
+  patients_clean %>% select(PPOSSUM, SORT, SRS, CCU_adm) %>%
+    filter(!is.na(CCU_adm)) %>%
+    mutate_at(vars(PPOSSUM, SORT, SRS),
+              funs(cut(., breaks = c(0, 0.05, 1), right = FALSE))) %>%
+    gather(key = "Risk_model", value = "Risk", -CCU_adm) %>%
+    mutate(Risk = recode(Risk, 
+                         `[0,0.05)` = "0 to 5%",
+                         `[0.05,1)` = "5% or more"),
+           Risk_model = recode(Risk_model,
+                               `PPOSSUM` = "P-POSSUM")) %>%
+    group_by(CCU_adm, Risk_model, Risk) %>%
+    summarise(count = n()) %>%
+    ungroup() %>%
+    group_by(Risk_model, Risk) %>%
+    mutate(prop = count/sum(count)) %>%
+    ggplot(data = ., aes(fill = CCU_adm, x = Risk, y = count)) +
+    geom_col() +
+    facet_wrap(~Risk_model) +
+    geom_text(aes(label = paste0(round(prop * 100, 1), "%")), position = position_stack(vjust = 0.5), size = 3) +
+    labs(title = "Critical care admissions in high-risk patients (whole cohort)",
+         x = "Predicted risk of mortality",
+         y = "Frequency (n)",
+         fill = "Immediate critical care admission") +
+    theme_classic() +
+    theme(legend.position = "none"),
+  
+  patients_clean %>% select(PPOSSUM, SORT, SRS, CCU_adm, country) %>%
+    filter(!is.na(CCU_adm)) %>%
+    mutate_at(vars(PPOSSUM, SORT, SRS),
+              funs(cut(., breaks = c(0, 0.05, 1), right = FALSE))) %>%
+    gather(key = "Risk_model", value = "Risk", -CCU_adm, -country) %>%
+    mutate(Risk = recode(Risk, 
+                         `[0,0.05)` = "0 to 5%",
+                         `[0.05,1)` = "5% or more"),
+           Risk_model = recode(Risk_model,
+                               `PPOSSUM` = "P-POSSUM")) %>%
+    group_by(CCU_adm, Risk_model, Risk, country) %>%
+    summarise(count = n()) %>%
+    ungroup() %>%
+    group_by(Risk_model, Risk, country) %>%
+    mutate(prop = count/sum(count)) %>%
+    ggplot(data = ., aes(fill = CCU_adm, x = Risk, y = count)) +
+    geom_col() +
+    facet_grid(country ~ Risk_model, scales = "free") +
+    geom_text(aes(label = paste0(round(prop * 100, 1), "%")), position = position_stack(vjust = 0.5), size = 3) +
+    labs(title = "Critical care admissions in high-risk patients (by country)",
+         x = "Predicted risk of mortality",
+         y = "Frequency (n)",
+         fill = "Immediate critical care admission") +
+    theme_classic() +
+    theme(legend.position = "bottom"),
+  
+  cols = 1,
+  align = "v",
+  rel_heights = c(1, 2), 
+  labels = c("A", "B")
+)
+```
+
+### Postoperative outcomes
+
+A number of inpatient postoperative outcomes were tracked in the cohort. 
+
+#### Postoperative length of stay
+
+The median postoperative length of stay was `r median(patients_clean$LOS, na.rm = TRUE)` days (IQR = `r quantile(patients_clean$LOS, na.rm = TRUE, prob = 0.25)` to `r quantile(patients_clean$LOS, na.rm = TRUE, prob = 0.75)` days)[^LOSWinsor]. The postoperative length of stay was longer in patients who were admitted to critical care immediately after surgery (median = `r median((patients_clean %>% filter(CCU_adm == TRUE))$LOS, na.rm = TRUE)`, IQR = `r quantile((patients_clean %>% filter(CCU_adm == TRUE))$LOS, na.rm = TRUE, prob = 0.25)` to `r quantile((patients_clean %>% filter(CCU_adm == TRUE))$LOS, na.rm = TRUE, prob = 0.75)` days) than for patients who were not immediately admitted postoperatively to critical care (median = `r median((patients_clean %>% filter(CCU_adm == FALSE))$LOS, na.rm = TRUE)`, IQR = `r quantile((patients_clean %>% filter(CCU_adm == FALSE))$LOS, na.rm = TRUE, prob = 0.25)` to `r quantile((patients_clean %>% filter(CCU_adm == FALSE))$LOS, na.rm = TRUE, prob = 0.75)` days, p = `r kruskal.test(LOS ~ CCU_adm, data = patients_clean)$p.value`, Figure 5-12). 
+
+[^LOSWinsor]: As the final inpatient follow-up timepoint was 60-days post-surgery, the lengths of stay for patients who remained in hospital on Day 60 were winsorised to 60 days. The number of patients who were still inpatient beyond Day 60 was small (n = `r nrow(patients_clean %>% filter(S07PostopLOS > 60 | (is.na(S07PostopLOS) & S05PatientStillAliveAndInHospital == "Y")))` [`r nrow(patients_clean %>% filter(S07PostopLOS > 60 | (is.na(S07PostopLOS) & S05PatientStillAliveAndInHospital == "Y")))/nrow(patients_clean) * 100`%]).
+
+```{r DescEpi_fig5-12, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8, fig.cap="Figure 5-12: Distribution of postoperative lengths of stay. Overall distribution (A), and stratified (B) by whether patients were admitted immediately to critical care after their surgery, or admitted to the general ward."}
+plot_grid(
+  patients_clean %>% 
+    ggplot(aes(x = LOS, y = ..density..)) +
+    geom_histogram(bins = 60, alpha = 0.8, fill = "gray") +
+    stat_density(geom = "line", adjust = 1.3) +
+    labs(x = "Length of Stay (days)", y = "Probability density",
+         title = "Postoperative Length of Stay (LOS)") +
+    xlim(0, 60) +
+    theme_classic(),
+  
+  
+  ggplot(data = filter(patients_clean, !is.na(CCU_adm)), aes(x = LOS, y = ..density..)) +
+    geom_histogram(aes(x = LOS, fill = CCU_adm), 
+                   bins = 60, alpha = 0.5, position = "identity") + 
+    stat_density(aes(col = CCU_adm), geom = "line", adjust = 1.3, show.legend = FALSE) +
+    labs(x = "Length of Stay (days)", y = "Probability density",
+         title = "Postoperative LOS by critical care admission",
+         col = NULL,
+         fill = "Immediate postoperative critical care admission") +
+    xlim(0, 60) +
+    theme_classic() +
+    theme(legend.position = "bottom"),
+  labels = c("A", "B"),
+  nrow = 2,
+  ncol = 1
+)
+
+# ggplot(data = filter(patients_clean, CCU_adm == FALSE), aes(x = LOS, y = ..density..)) +
+#    geom_histogram(data = filter(patients_clean, CCU_adm == TRUE), 
+#                   aes(x = LOS), 
+#                   bins = 60, alpha = 0.5, fill = "red") + 
+#    geom_histogram(data = filter(patients_clean, CCU_adm == FALSE), 
+#                   aes(x = LOS), 
+#                   bins = 60, alpha = 0.5, fill = "blue") +
+#    labs(x = "Length of Stay (days)", y = "Probability density",
+#         title = "Postoperative LOS by critical care admission") +
+#    xlim(0, 60) +
+#    theme_classic()
+```
+
+The postoperative lengths of stay differed according to the specialty of the surgery patients underwent (Figure 5-13). Median length of stay was highest in cardiothoracic patients (`r patients_clean %>% filter(specialty_recoded == "Thoracic") %>% select(LOS) %>% pull() %>% median(na.rm = TRUE)` days, IQR = `r patients_clean %>% filter(specialty_recoded == "Thoracic") %>% select(LOS) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.25)` to `r patients_clean %>% filter(specialty_recoded == "Thoracic") %>% select(LOS) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.75)`), and lowest in patients undergoing "other" surgery[^OtherSurgery] (median = `r patients_clean %>% filter(specialty_recoded == "Other") %>% select(LOS) %>% pull() %>% median(na.rm = TRUE)` day, IQR = `r patients_clean %>% filter(specialty_recoded == "Other") %>% select(LOS) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.25)` to `r patients_clean %>% filter(specialty_recoded == "Other") %>% select(LOS) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.75)`). 
+
+The median length of stay was similar in the UK (median = `r patients_clean %>% filter(country == "UK") %>% select(LOS) %>% pull() %>% median(na.rm = TRUE)` days, IQR = `r patients_clean %>% filter(country == "UK") %>% select(LOS) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.25)` to `r patients_clean %>% filter(country == "UK") %>% select(LOS) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.75)` days), Australia (median = `r patients_clean %>% filter(country == "Aus") %>% select(LOS) %>% pull() %>% median(na.rm = TRUE)` days, IQR = `r patients_clean %>% filter(country == "Aus") %>% select(LOS) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.25)` to `r patients_clean %>% filter(country == "Aus") %>% select(LOS) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.75)` days) and New Zealand (median = `r patients_clean %>% filter(country == "NZ") %>% select(LOS) %>% pull() %>% median(na.rm = TRUE)` days, IQR = `r patients_clean %>% filter(country == "NZ") %>% select(LOS) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.25)` to `r patients_clean %>% filter(country == "NZ") %>% select(LOS) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.75)` days).
+
+[^OtherSurgery]: "Other" surgery includes the following specialties: breast and endocrine surgery, ear-nose-throat (ENT), maxillofacial and dental surgery, ophthalmic surgery, plastic surgery, and transplant surgery. Within this category procedures which required anaesthetic support, but not necessarily performed by a surgeon, such as interventional cardiology, endoscopic and interventional radiology procedures were also included.
+
+```{r DescEpi_fig5-13, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=6, fig.cap="Figure 5-13: Postoperative length of stay variation according to surgical specialty."}
+patients_clean %>%
+  filter(!is.na(specialty_recoded)) %>%
+  mutate(Specialty = recode_factor(specialty_recoded,
+                                   `Other` = "Other",
+                                   `Vascular` = "Vascular",
+                                   `Obs` = "Obstetrics",
+                                   `Ortho` = "Orthopaedics",
+                                   `Neuro-Spine` = "Neurosurgery/Spine",
+                                   `Gynaecology-Urology` = "Gynaecology/Urology",
+                                   `Thoracic` = "Cardiac/Thoracic",
+                                   `GI` = "Gastrointestinal",
+                                   .ordered = TRUE)) %>%
+  ggplot(aes(x = LOS, y = Specialty)) +
+  geom_density_ridges(alpha = 0.8) +
+  labs(title = "Lengths of stay by surgical specialty") +
+  xlim(0,60) + 
+  theme_classic()
+
+#patients_clean %>%
+#  group_by(specialty_recoded) %>%
+#  summarise(Median_LOS = median(LOS, na.rm = TRUE),
+#            IQR_lower = quantile(LOS, na.rm = TRUE, prob = 0.25),
+#            IQR_upper = quantile(LOS, na.rm = TRUE, prob = 0.75),
+#            Sample_n = n()) %>%
+#  arrange(desc(Sample_n))
+```
+
+#### Late admissions to Critical Care
+
+While `r formatC(nrow(patients_clean %>% filter(CCU_adm == TRUE)), big.mark = ",")` patients were admitted immediately to critical care after their surgery, `r formatC(nrow(patients_clean) - nrow(patients_clean %>% filter(CCU_adm == TRUE)), big.mark = ",")` patients were not. Of the latter group, a small number (n = `r formatC(nrow(patients_clean %>% filter(CCU_adm == "FALSE" & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y")), big.mark = ",")`) required critical care admission at a later time point during their hospital stay.
+
+Of the group who were admitted to critical care immediately postoperatively, `r nrow(patients_clean %>% filter(CCU_adm == TRUE & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y"))/(nrow(patients_clean %>% filter(CCU_adm == TRUE))) * 100`% (n = `r nrow(patients_clean %>% filter(CCU_adm == TRUE & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y"))`) required critical care readmission at a later time.
+
+#### Length of Critical Care Stay
+
+The median duration spent in critical care for patients who were immediately admitted there postoperatively was `r patients_clean %>% filter(CCU_adm == TRUE) %>% select(S07NumberOfDaysSpentInCriticalCareAfterSurgery) %>% pull() %>% median(na.rm = TRUE)` days (IQR = `r patients_clean %>% filter(CCU_adm == TRUE) %>% select(S07NumberOfDaysSpentInCriticalCareAfterSurgery) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.25)` to `r patients_clean %>% filter(CCU_adm == TRUE) %>% select(S07NumberOfDaysSpentInCriticalCareAfterSurgery) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.75)` days). In the minority of patients who were not initially admitted to critical care immediately following surgery, but later required critical care during their stay in hospital, the median duration spent in critical care was also `r patients_clean %>% filter(CCU_adm == FALSE & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y") %>% select(S07NumberOfDaysSpentInCriticalCareAfterSurgery) %>% pull() %>% median(na.rm = TRUE)` days (IQR = `r patients_clean %>% filter(CCU_adm == FALSE & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y") %>% select(S07NumberOfDaysSpentInCriticalCareAfterSurgery) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.25)` to `r patients_clean %>% filter(CCU_adm == FALSE & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y") %>% select(S07NumberOfDaysSpentInCriticalCareAfterSurgery) %>% pull() %>% quantile(na.rm = TRUE, prob = 0.75)` days).
+
+#### Morbidity
+
+A total of `r formatC(nrow(patients_clean %>% filter(LOS >= 7)), big.mark = ",")` patients (`r nrow(patients_clean %>% filter(LOS >= 7))/nrow(patients_clean) * 100`%) remained in hospital on Day 7 post-surgery. Of these, `r formatC(nrow(patients_clean %>% filter(POMS == TRUE & LOS >= 7)), big.mark = ",")`patients (`r nrow(patients_clean %>% filter(POMS == TRUE & LOS >= 7))/nrow(patients_clean %>% filter(LOS >= 7)) * 100`%) were recorded as having POMS-defined morbidity on Day 7. Patients discharged before Day 7 were assumed to have no POMS-defined morbidity, therefore these `r formatC(nrow(patients_clean %>% filter(POMS == TRUE & LOS >= 7)), big.mark = ",")` patients with POMS-defined morbidity represented `r nrow(patients_clean %>% filter(POMS == TRUE & LOS >= 7))/nrow(patients_clean) * 100`% of all patients in the cohort. Table 5-7 summarises the numbers and proportions (expressed as the percentage of patients who remained in hospital on Day 7, and as a percentage of total patients in the cohort) with recorded POMS-defined morbidity on Day 7 post-surgery.
+
+```{r DescEpi_table5-7, echo=FALSE, message=FALSE, warning=FALSE}
+table5_7a <- patients_clean %>% select(POMS, S05O2Therapy:S05RegionalAnalgesia) %>%
+  CreateTableOne(data = .) %>%
+  print(explain = FALSE, test = FALSE, printToggle = FALSE, noSpaces = TRUE, format = "p")
+colnames(table5_7a) <- "% of whole cohort"
+
+table5_7b <- patients_clean %>% filter(LOS >= 7) %>%
+  select(POMS, S05O2Therapy:S05RegionalAnalgesia) %>%
+  CreateTableOne(data = .) %>%
+  print(explain = FALSE, test = FALSE, printToggle = FALSE, noSpaces = TRUE, format = "p")
+colnames(table5_7b) <- "% of inpatients on Day 7"
+
+table5_7c <- patients_clean %>% 
+  select(POMS, S05O2Therapy:S05RegionalAnalgesia) %>%
+  CreateTableOne(data = .) %>%
+  print(explain = FALSE, test = FALSE, printToggle = FALSE, noSpaces = TRUE, format = "f")
+colnames(table5_7c) <- "Number of patients with morbidity"
+
+table5_7 <- cbind(table5_7c, table5_7b, table5_7a) 
+
+table5_7[1,1] <- "-"
+
+rownames(table5_7) <- c("n", 
+                        "Any POMS-defined morbidity present on Day 7", 
+                        "Pulmonary: new oxygen requirement", 
+                        "Pulmonary: new ventilatory support", 
+                        "Infectious: temperature >38°C in last 24hrs", 
+                        "Infectious: currently on antibiotics", 
+                        "Renal: <500ml urine output in last 24hrs", 
+                        "Renal: raised serum creatinine >30% from preoperative level",
+                        "Renal: urinary catheter in situ", 
+                        "Cardiovascular: new myocardial infarction/ischaemia", 
+                        "Cardiovascular: hypotension requiring fluid >200ml/hr or pharmacological therapy", 
+                        "Cardiovascular: atrial or ventricular arrhythmias", 
+                        "Cardiovascular: cardiogenic pulmonary oedema", 
+                        "Cardiovascular: thrombotic event requiring anticoagulation",
+                        "Gastrointestinal: unable to tolerate enteral diet", 
+                        "Gastrointestinal: use of antiemetics in last 24hrs", 
+                        "Neurological: new focal neurological deficit", 
+                        "Neurological: new confusion", 
+                        "Neurological: new delirium",
+                        "Neurological: new coma associated with administration of sedation",
+                        "Neurological: new coma without administation of sedation",
+                        "Haematological: red cell transfusion requirement in last 24hrs",
+                        "Haematological: fresh frozen plasma/platelet/cryoprecipitate transfusion in last 24hrs",
+                        "Wound: dehiscence requiring surgical exploration",
+                        "Wound: drainage of pus from operative wound",
+                        "Pain: postoperative pain needing parenteral opioids", 
+                        "Pain: postoperative pain needing regional analgesia")
+
+table5_7 %>% pander("Table 5-7: Day 7 Postoperative morbidity as defined by POMS.")
+```
+
+Patients who remained inpatient on postoperative day 7 and recorded POMS-defined morbidity on that day, also recorded longer postoperative lengths of stay (median = `r patients_clean %>% filter(POMS == TRUE & LOS >= 7) %>% select(LOS) %>% pull() %>% median(na.rm = TRUE)` days) than patients who did not (median = `r patients_clean %>% filter(POMS == FALSE & LOS >= 7) %>% select(LOS) %>% pull() %>% median(na.rm = TRUE)` days, p = `r kruskal.test(LOS ~ POMS, data = filter(patients_clean, LOS >= 7))$p.value`, Figure 5-14). This finding was true regardless of specialty.
+
+```{r DescEpi_fig5-14, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=6, fig.cap="Figure 5-14: Distributions of postoperative length of stay, for patients who remained in-hospital on postoperative day 7, according to surgical specialty and POMS-defined morbidity. Patients with lengths of stay of 60 days or more have been removed from this plot to avoid an artefactual rise in the distribution at the extremes of hospital lengths of stay."}
+patients_clean %>%
+  filter(!is.na(specialty_recoded)) %>%
+  filter(!is.na(POMS)) %>%
+  filter(LOS >= 7 & LOS <= 59) %>%
+  mutate(Specialty = recode_factor(specialty_recoded,
+                                   `Other` = "Other",
+                                   `Vascular` = "Vascular",
+                                   `Obs` = "Obstetrics",
+                                   `Ortho` = "Orthopaedics",
+                                   `Neuro-Spine` = "Neurosurgery/Spine",
+                                   `Gynaecology-Urology` = "Gynaecology/Urology",
+                                   `Thoracic` = "Cardiac/Thoracic",
+                                   `GI` = "Gastrointestinal",
+                                   .ordered = TRUE)) %>%
+  ggplot(aes(x = LOS, y = Specialty, fill = POMS)) +
+  geom_density_ridges(alpha = 0.5) +
+  #geom_density_ridges(stat = "binline", bins = 20, alpha = 0.3) +
+  #facet_grid(~ POMS) +
+  scale_x_continuous(breaks = c(7, 10, 20, 30, 40, 50, 60), 
+                     limits = c(7, 60)) +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  labs(fill = "Day 7 POMS-defined morbidity",
+       x = "Postoperative LOS (days)")
+```
+
+Some domains of POMS-defined morbidity include less severe and relatively transient morbid states, such as the presence of a urinary catheter and the use of anti-emetics, which may not necessarily be considered complications arising from surgery, but rather conditions expected during normal surgical recovery. Therefore, the frequency of higher-grade (POMS-major) morbidity was calculated[^POMSMajor].
+
+The incidence of POMS-major morbidity in the patients who remained in hospital on Day 7 was `r nrow(patients_clean %>% filter(POMS_Hi == TRUE & LOS >= 7))/nrow(patients_clean %>% filter(LOS >= 7)) * 100`% (or `r nrow(patients_clean %>% filter(POMS_Hi == TRUE & LOS >= 7))/nrow(patients_clean) * 100`% of the entire patient cohort, including those that were discharged before Day 7). Conversely, the incidence of POMS-minor morbidity in this group of patients was `r nrow(patients_clean %>% filter(POMS_Lo == TRUE & LOS >= 7))/nrow(patients_clean %>% filter(LOS >= 7)) * 100`% (or `r nrow(patients_clean %>% filter(POMS_Lo == TRUE & LOS >= 7))/nrow(patients_clean) * 100`% of the entire patient cohort). The unadjusted incidence of POMS-defined morbidity, POMS-major morbidity, and POMS-minor morbidity was lowest in the UK (p < 0.05 for all three morbidity outcomes, both in patients who remained in hospital on postoperative Day 7 [Table 5-8] and in all patients regardless of when they were discharged [Table 5-9]).
+
+[^POMSMajor]: This used definitions I have previously published, that mapped POMS morbidity domains against Clavien-Dindo definitions of postoperative complications [@wong_predicting_2017]. Patients with higher-grades of postoperative morbidity could be identified from the cohort. Higher-grade morbidities include Clavien-Dindo Grade 2 or above, i.e. any deviation from the normal postoperative course requiring pharmacological treatment or surgical, endoscopic, and radiological interventions (excluding antiemetics, antipyretics, analgesics, diuretics, electrolytes, and physiotherapy). Based on this, temperature >38°C in the last 24 hours, having a urinary catheter in situ, being unable to tolerate an enteral diet, vomiting or abdominal distension, or use of anti-emetics, and new pain significant enough to require parenteral opioids or regional analgesia, were all considered Clavien-Dindo Grade 1 complications, and the rest of the POMS morbidities were considered Grade 2 or higher.
+
+```{r DescEpi_table5-8, echo=FALSE, message=FALSE, warning=FALSE}
+patients_clean %>% filter(LOS >= 7) %>%
+  select(POMS, POMS_major = POMS_Hi, POMS_minor = POMS_Lo, country) %>%
+  CreateTableOne(data = ., strata = "country", vars = c("POMS", "POMS_major", "POMS_minor")) %>%
+  print(explain = TRUE, test = TRUE, printToggle = FALSE, noSpaces = TRUE, format = "p") %>%
+  pander("Table 5-8: Incidence of POMS-defined morbidity in patients remaining in hospital on Postoperative Day 7, stratified by country.")
+```
+
+```{r DescEpi_table5-9, echo=FALSE, message=FALSE, warning=FALSE}
+patients_clean %>% 
+  select(POMS, POMS_major = POMS_Hi, POMS_minor = POMS_Lo, country) %>%
+  CreateTableOne(data = ., strata = "country", vars = c("POMS", "POMS_major", "POMS_minor")) %>%
+  print(explain = TRUE, test = TRUE, printToggle = FALSE, noSpaces = TRUE, format = "p") %>%
+  pander("Table 5-9: Incidence of POMS-defined morbidity in all patients in the cohort, regardless of their postoperative length of stay, stratified by country.")
+```
+
+The incidence of POMS-defined morbidity was higher in patients who were directly admitted postoperatively to critical care than patients who were not directly admitted (Table 5-10), and this was also true POMS-major and POMS-minor morbidities.
+
+```{r DescEpi_table5-10, echo=FALSE, message=FALSE, warning=FALSE}
+patients_clean %>% 
+  select(POMS, POMS_major = POMS_Hi, POMS_minor = POMS_Lo, CCU_adm) %>%
+  CreateTableOne(data = ., strata = "CCU_adm", vars = c("POMS", "POMS_major", "POMS_minor")) %>%
+  print(explain = TRUE, test = TRUE, printToggle = FALSE, noSpaces = TRUE, format = "p") %>%
+  pander("Table 5-10: Incidence of POMS-defined morbidity stratified by immediate critical care admission vs. ward admission after surgery.")
+```
+
+#### Mortality
+
+There were `r table(patients_clean$mort30)["TRUE"]` deaths within 30 days of surgery in the cohort (`r table(patients_clean$mort30)["TRUE"]/nrow(patients_clean) * 100`%). The mortality rate of patients who were admitted to critical care postoperatively (n = `r nrow(patients_clean %>% filter(CCU_adm == TRUE & mort30 == TRUE))` [`r nrow(patients_clean %>% filter(CCU_adm == TRUE & mort30 == TRUE))/nrow(patients_clean %>% filter(CCU_adm == TRUE))*100`%]) was higher than the mortality rate of patients who were not admitted to critical care postoperatively (n = `r nrow(patients_clean %>% filter(CCU_adm == FALSE & mort30 == TRUE))` [`r nrow(patients_clean %>% filter(CCU_adm == FALSE & mort30 == TRUE))/nrow(patients_clean %>% filter(CCU_adm == FALSE))*100`%], p = `r (with(patients_clean, table(CCU_adm, mort30)) %>% prop.test())$p.value`, Table 5-11). 
+
+```{r DescEpi_table5-11, echo=FALSE, message=FALSE, warning=FALSE}
+table5_11a <- patients_clean %>% 
+  select(CCU_adm, mort30, mort60) %>%
+  CreateTableOne(data = ., vars = c("mort30", "mort60"), strata = "CCU_adm") %>%
+  print(test = TRUE, printToggle = FALSE, noSpaces = TRUE)
+
+table5_11b <- patients_clean %>% 
+  select(CCU_adm, mort30, mort60) %>%
+  CreateTableOne(data = ., vars = c("mort30", "mort60")) %>%
+  print(test = TRUE, printToggle = FALSE, noSpaces = TRUE)
+
+cbind(table5_11b, table5_11a) %>%
+    pander("Table 5-11: Mortality, stratified by critical care admission.")
+```
+
+Within 60 days of surgery, there were `r table(patients_clean$mort60)["TRUE"]` deaths in the cohort (`r table(patients_clean$mort60)["TRUE"]/nrow(patients_clean) * 100`%). The mortality rate of patients who were admitted to critical care postoperatively (n = `r nrow(patients_clean %>% filter(CCU_adm == TRUE & mort60 == TRUE))` [`r nrow(patients_clean %>% filter(CCU_adm == TRUE & mort60 == TRUE))/nrow(patients_clean %>% filter(CCU_adm == TRUE))*100`%]) was again higher than the mortality rate of patients who were not admitted to critical care postoperatively (n = `r nrow(patients_clean %>% filter(CCU_adm == FALSE & mort60 == TRUE))` [`r nrow(patients_clean %>% filter(CCU_adm == FALSE & mort60 == TRUE))/nrow(patients_clean %>% filter(CCU_adm == FALSE))*100`%], p = `r (with(patients_clean, table(CCU_adm, mort60)) %>% prop.test())$p.value`, Table 5-11). 
+
+A Kaplan-Meier curve of patient survival following surgery is plotted in Figure 5-15. To compute the Kaplan-Meier survival estimate, death was censored at 60 days post-surgery. Immediate admission to critical care postoperatively was associated with poorer patient survival in this cohort (p <0.01).
+
+```{r DescEpi_fig5-15, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4, fig.cap="Figure 5-15: Kaplan-Meier curves of patient survival, stratified by immediate postoperative admission to critical care versus postoperative admission to the ward. Survival was lower in the sub-group that was admitted immediately to critical care after surgery (log-rank test p <0.0001)."}
+patients_clean %>%
+  mutate(status = case_when(S07StatusAtDischarge == "D" ~ 1,
+                            S07StatusAtDischarge == "A" ~ 0,
+                            is.na(S07StatusAtDischarge) ~ 0)) %>%
+  mutate(los = replace(S07PostopLOS, 
+                       which((is.na(S07PostopLOS) &
+                                S07StillInHospitalPrimaryAdmissionAfterSurgery == "Y") | 
+                               S07PostopLOS > 60), 60)) %>%
+  ggsurvplot(survfit(Surv(los, status) ~ CCU_adm, 
+                     data = .), 
+             data = .,
+             censor.shape="",
+             xlim = c(0,60),
+             break.time.by = 10,
+             conf.int = TRUE,
+             pval = TRUE,
+             risk.table = FALSE,
+             risk.table.y.text = FALSE,
+             legend.labs = c("Ward", "Critical Care"),
+             ggtheme = theme_classic()) +
+  labs(title = "Postoperative survival curves",
+       x = "Time (days)")
+```
+
+The mortality rate in the `r formatC(nrow(patients_clean %>% filter(CCU_adm == "FALSE" & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y")), big.mark = ",")` patients admitted critical care at a later date following surgery (the so-called "failure to rescue" group) was high (n = `r nrow(patients_clean %>% filter(S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y" & mort30 == TRUE))` [`r nrow(patients_clean %>% filter(S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y" & mort30 == TRUE))/nrow(patients_clean %>% filter(S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y"))*100`%]). However, patients who were admitted to critical care immediately postoperatively, who then subsequently required readmission to critical care had a lower 30-day inpatient mortality (n = `r nrow(patients_clean %>% filter(CCU_adm == TRUE & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y" & mort30 == TRUE))` [`r nrow(patients_clean %>% filter(CCU_adm == TRUE & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y" & mort30 == TRUE))/nrow(patients_clean %>% filter(CCU_adm == TRUE & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y")) * 100`%]) than those who were not initially admitted to critical care immediately postoperatively, but subsequently required critical care at a later time-point during their stay (n = `r nrow(patients_clean %>% filter(CCU_adm == FALSE & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y" & mort30 == TRUE))` [`r nrow(patients_clean %>% filter(CCU_adm == FALSE & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y" & mort30 == TRUE))/nrow(patients_clean %>% filter(CCU_adm == FALSE & S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y")) * 100`%], p = `r (with(filter(patients_clean, S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y"), table(CCU_adm, mort30)) %>% prop.test())$p.value`).
+
+```{r DescEpi_table5-12, echo=FALSE, message=FALSE, warning=FALSE}
+patients_clean %>% 
+  filter(S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y") %>%
+  select(CCU_adm, mort30) %>%
+  CreateTableOne(data = ., vars = "mort30", strata = "CCU_adm") %>%
+  print(test = TRUE, printToggle = FALSE, noSpaces = TRUE) %>%
+  pander("Table 5-12: Failures to rescue. Mortality in patients subsequently admitted to critical care for treatment of complications, stratified by whether they were admitted to critical care immediately on the day of surgery.")
+```
+
+Tabulating the mortality rates within strata of risk as predicted using each risk tool, the majority of deaths within 30-days of surgery occurred within the small minority of patients with high predicted risk (&ge;5% predicted mortality) (Table 5-13).
+
+```{r DescEpi_table5-13, echo=FALSE, message=FALSE, warning=FALSE}
+patients_clean %>% 
+  select(SORT, mort30) %>%
+  mutate(SORT = cut(SORT, breaks = c(0, 0.01, 0.025, 0.05, 0.10, 0.5, 1), right = FALSE)) %>%
+  CreateTableOne(data = ., vars = "mort30", strata = "SORT") %>%
+  print(test = FALSE, printToggle = FALSE, noSpaces = TRUE) %>%
+  pander("Table 5-13a: 30-day mortality by risk strata as predicted using SORT.")
+
+patients_clean %>% 
+  select(SRS, mort30) %>%
+  mutate(SRS = cut(SRS, breaks = c(0, 0.01, 0.025, 0.05, 0.10, 0.5, 1), right = FALSE)) %>%
+  CreateTableOne(data = ., vars = "mort30", strata = "SRS") %>%
+  print(test = FALSE, printToggle = FALSE, noSpaces = TRUE) %>%
+  pander("Table 5-13b: 30-day mortality by risk strata as predicted using SRS.")
+
+patients_clean %>% 
+  select(PPOSSUM, mort30) %>%
+  mutate(PPOSSUM = cut(PPOSSUM, breaks = c(0, 0.01, 0.025, 0.05, 0.10, 0.5, 1), right = FALSE)) %>%
+  CreateTableOne(data = ., vars = "mort30", strata = "PPOSSUM") %>%
+  print(test = FALSE, printToggle = FALSE, noSpaces = TRUE) %>%
+  pander("Table 5-13c: 30-day mortality by risk strata as predicted using PPOSSUM.")
+
+```
+
+The postoperative survival of patients (unadjusted) differed across the three countries (Figure 5-16).
+
+```{r DescEpi_fig5-16, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4, fig.cap="Figure 5-16: Kaplan-Meier curves of patient survival, stratified by country. Unadjusted survival was higher in patients from Australia (log-rank test p = 0.017), which may be due to differences in case-mix or other confounding factors."}
+patients_clean %>%
+  mutate(status = case_when(S07StatusAtDischarge == "D" ~ 1,
+                            S07StatusAtDischarge == "A" ~ 0,
+                            is.na(S07StatusAtDischarge) ~ 0)) %>%
+  mutate(los = replace(S07PostopLOS, 
+                       which((is.na(S07PostopLOS) &
+                                S07StillInHospitalPrimaryAdmissionAfterSurgery == "Y") | 
+                               S07PostopLOS > 60), 60)) %>%
+  ggsurvplot(survfit(Surv(los, status) ~ country, 
+                     data = .), 
+             data = .,
+             censor.shape="",
+             xlim = c(0,60),
+             break.time.by = 10,
+             conf.int = FALSE,
+             pval = TRUE,
+             risk.table = FALSE,
+             risk.table.y.text = FALSE,
+             ggtheme = theme_classic()) +
+  labs(title = "Postoperative survival curves",
+       x = "Time (days)")
+```
+
+## Discussion
+
+### Principal Findings
+
+Patient-level data was collected in a large number of patients across multiple centres in the UK, Australia and New Zealand, representing a wide range of surgical specialties and heterogenous mix of elective and emergency cases.
+
+In this large prospective cohort of patients undergoing inpatient surgery, the overall inpatient mortality was low (30-day mortality = `r table(patients_clean$mort30)["TRUE"]/nrow(patients_clean) * 100`%, 60-day mortality = `r table(patients_clean$mort60)["TRUE"]/nrow(patients_clean) * 100`%). The overall incidence of POMS-defined morbidity at Day 7 post-surgery was `r nrow(patients_clean %>% filter(POMS == TRUE & LOS >= 7))/nrow(patients_clean) * 100`% (or `r nrow(patients_clean %>% filter(POMS == TRUE & LOS >= 7))/nrow(patients_clean %>% filter(LOS >= 7)) * 100`% of the patients who remained in hospital on Day 7).
+
+A minority (`r nrow(patients_clean %>% filter(CCU_adm == TRUE))/nrow(patients_clean) * 100`%) of patients were admitted to critical care immediately after surgery, and a smaller proportion (`r nrow(patients_clean %>% filter(S07UnplannedPostoperativeIcuHduAdmissionAfterDayOfSurgery == "Y"))/nrow(patients_clean) * 100`%) of patients were admitted to critical care later on in their hospital stay for further management. Patients who had immediate postoperative to critical care admission had higher incidences of postoperative morbidity and mortality, and longer postoperative lengths of stay than patients who were not immediately admitted. Patients who required rescue critical care at a later timepoint during their hospital stay, after not initially being admitted to critical care immediately following surgery, had higher 30-day mortality than patients who were immediately admitted to critical care after their operation.
+
+ASA-PS I and II patients formed the majority of the cohort (`r nrow(patients_clean %>% filter(S03AsaPsClass == "I" | S03AsaPsClass == "II"))/nrow(patients_clean) * 100`%). Computing preoperative predicted risks using a selection of previously-validated risk prediction tools, the proportion of patients considered "high-risk" (predicted mortality &ge;5%) ranged from `r nrow(patients_clean %>% filter(SORT >= 0.05))/nrow(patients_clean) * 100`% to `r nrow(patients_clean %>% filter(SRS >= 0.05))/nrow(patients_clean) * 100`%) depending on the tool used for the calculation. However, regardless of the prediction tool used, the proportion of high-risk patients admitted to critical care immediately following surgery was consistently low &mdash; only around a third of those with &ge;5% mortality as predicted using each risk tool were received immediate admission to critical care.
+
+### Comparison with other surgical cohorts in the literature
+
+Similar to previous studies, a small proportion of predicted high-risk patients accounted for a large proportion of the mortality in the cohort [@pearse_identification_2006; @jhanji_mortality_2008; @pearse_managing_2011; @pearse_mortality_2012; @gillies_regional_2015; @the_international_surgical_outcomes_study_group_global_2016; @gillies_intensive_2017; @kahan_critical_2017]. While, approximately 10% of patients had a &ge;5% predicted risk of death as calculated using SORT, over 70% of the deaths in the cohort came from this subgroup.
+
+In other heterogenous international surgical cohorts, reported mortality rates vary from as low as 0.4% in the Measurement of Exercise Tolerance before Surgery (METS) study, to as high as 4.0% in the European Surgical Outcomes Study, with significant variation exhibited between countries of different income and economic development [@wijeysundera_predicting_2016; @the_international_surgical_outcomes_study_group_global_2016; @pearse_mortality_2012; @smith_thirty-day_2016]. Identifying studies in populations more similar to this cohort, the mortality rates reported in the literature showed a narrower range, perhaps more comparable to this cohort &mdash; for example, Abbott *et al* estimated a 1.1% to 2.8% in UK patients undergoing surgery between 2009 and 2014 using a large retrospective administrative dataset [@abbott_frequency_2017]; the Determining Surgical Complications in the Overweight (DISCOVER) study reported a 2.9% 30-day mortality in a higher risk surgical population undergoing major gastrointestinal and liver surgery in the UK and Ireland [@mclean_critical_2019]; Gillies *et al* found a 0.8% mortality rate in Scottish surgical (excluding neurosurgery and cardiac surgery) inpatients between 2005 and 2007 [@gillies_intensive_2017]. Therefore, mortality findings in this cohort appear to be consistent with estimates of postoperative death after surgery in other studies.
+
+The morbidity rate found in the SNAP-2: EPICCS cohort using POMS definitions for postoperative complications (`r nrow(patients_clean %>% filter(POMS == TRUE & LOS >= 7))/nrow(patients_clean) * 100`%) was slightly lower than the complication rate of 16.8% reported in ISOS, but similar to that reported in METS [@wijeysundera_predicting_2016; @the_international_surgical_outcomes_study_group_global_2016]. While mortality is unarguably important, equally important morbidity outcomes are comparatively infrequently-reported in perioperative studies, and suffer from lack of standardisation/consensus [@myles_standardizing_2016]. Although the criteria for defining complications in this cohort are not the same as those used in ISOS and METS &mdash; the former used a list of conditions, broken down into "Infectious", "Cardiovascular" and "Other" complications; while the latter used a list of diagnoses including non-fatal cardiac arrest, heart failure, stroke/transient ischaemic attack, respiratory failure, pneumonia, surgical site infection, deep vein thrombosis/pulmonary embolism, unexpected critical care admission or need for reoperation &mdash; they are not so drastically different from POMS definitions to render  estimates reported within this chapter entirely incomparable [@bennett-guerrero_use_1999 ;@grocott_postoperative_2007].
+
+Unadjusted outcomes for patients who were admitted directly to critical care after surgery in this SNAP-2: EPICCS cohort were worse than those patients who were recovered on the general surgical ward immediately postoperatively. This replicates the findings in numerous previous studies reporting poorer outcomes in patients receiving immediate postoperative critical care [@pearse_mortality_2012; @vester-andersen_mortality_2014; @symons_mortality_2013; @wunsch_use_2016; @kahan_critical_2017; @gillies_intensive_2017; @mclean_critical_2019]. The explanation offered in all these observational studies for the poorer outcomes in the immediate critical care admission group is the likely presence of residual confounding by indication due to strong selection bias that exists for higher-risk patients being admitted to critical care.
+
+### Low admission rates to critical care for high-risk patients
+
+The proportion of patients admitted immediately to critical care after surgery has previously been estimated as being as low as 0.8% in a Scottish cohort (Gillies *et al*) to as high as 37.8% in the UK and Irish DISCOVER cohort [@gillies_intensive_2017; @the_international_surgical_outcomes_study_group_global_2016; @pearse_mortality_2012; @mclean_critical_2019; @jerath_intensive_2018]. The variation that exists in the literature is likely due to the differences in the cohorts studied, and geographical variations in the availability of critical care resources [@gillies_regional_2015]. For example, the DISCOVER cohort, where more than a third of patients studied were admitted to critical care, consisted mainly of patients undergoing major gastrointestinal and liver surgery which may represent a higher risk patient group where more protocolised care exists.
+
+In this cohort, the proportion of high-risk patients who were admitted to critical care directly after surgery was found to be low, regardless of the tool used for mortality prediction. This finding suggests that little has changed in the last decade to identify the right patients to admit to high-intensity care postoperatively, despite the published recommendations [@findlay_knowing_2011; @anderson_higher_2011; @lees_high-risk_2018]. There may be a number of reasons for this discrepancy, which have been discussed in earlier chapters. These include the lack of capacity for critical care, clinicians not accurately identifying high-risk patients, or other factors.
+
+Although postoperative critical care admission guidance exists in the UK, and not in Australia or New Zealand, it was interesting to find that the rates of admission to critical care for the &ge;5% mortality risk group was higher in Australasia than in the UK. This may be a function of increased proportion of critical care beds in the hospitals in Australia and New Zealand, compared to the UK, a finding reported in the previous chapter. Another explanation for this finding may be that clinicians in Australasia are better at anticipating patient risks than in the UK and therefore appropriately admit high-risk patients to critical care. However, these possible explanations will need to be tested later in this thesis.
+
+Therefore, in subsequent chapters, I will examine the accuracy of clinician risk assessments, and compare subjective risk prediction performance against the previously-validated objective risk prediction tools. I will then construct a higher-performing model for perioperative risk, which takes into account information from both subjective clinician assessment and the best-performing risk tool, in order to 1) improve on estimates of the effect of critical care on outcomes, 2) quantify the extent to which patient risk has an influence on the propensity for clinicians to recommend patients for critical care, and 3) quantify the extent to which patient risk has an influence on the propensity for patients to ultimately receive critical care after accounting for whether they actually received a clinician recommendation for critical care admission.
+
+### Summary
+
+In this chapter I presented the epidemiology of inpatient surgery in a representative and generalisable sample of UK, Australian and New Zealand patients. The baseline risk profiles of this large international cohort are comparable to previous heterogenous surgical cohorts in the literature. Direct critical care admission rates in this cohort have been described. In this cohort, `r nrow(patients_clean %>% filter(CCU_adm == TRUE))/nrow(patients_clean) * 100`% were admitted immediately to critical care after surgery. Admission to critical care for high-risk patients was low, regardless of the risk prediction tool used, with only around a third of patients with &ge;5% predicted mortality directly admitted. Unadjusted outcomes (postoperative length of stay, morbidity and mortality) in this cohort reflect the findings of other similar published observational studies. Overall 30-day and 60-day mortality in the cohort was `r table(patients_clean$mort30)["TRUE"]/nrow(patients_clean) * 100`% and `r table(patients_clean$mort60)["TRUE"]/nrow(patients_clean) * 100`%, respectively.
+
+Further work in the subsequent chapters of this thesis will focus on additional analyses using data from this described cohort to refine risk-adjusted outcome estimates of the effect of immediate critical care admission and estimates of the propensity for patients to receive a clinician recommendation for critical care and eventual admission to critical care.
+
+##### PAGE BREAK

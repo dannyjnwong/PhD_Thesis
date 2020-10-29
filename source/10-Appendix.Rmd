@@ -1,0 +1,301 @@
+---
+title: "Appendix"
+author: "Danny Wong"
+date: "9 April 2018"
+output:
+  word_document:
+    reference_docx: styles.docx
+  pdf_document: default
+link-citations: yes
+description: This is Appendix which accompanies the PhD Thesis for Danny's
+  PhD
+subtitle: Miscellaneous supporting information
+bibliography: ../references/bib/SNAP2.bib
+---
+
+```{r Appendix_setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(summarytools)
+library(tidyverse)
+library(pdftools)
+
+#Load patient data
+load("../data/SNAP2_combined_clean.Rdata")
+
+#Write a function to include pages from a pdf file
+include_pdf <- function(file_in = NULL, include_page = 1, dpi_out = 300){
+  require(pdftools)
+  require(knitr)
+  file_out = paste0(sub("\\.pdf", "", file_in), "_",include_page, ".png")
+  pdf_convert(file_in, page = include_page, dpi = dpi_out,
+              filenames = file_out, verbose = FALSE)
+  include_graphics(file_out)
+}
+```
+
+# Appendices
+
+## Appendix 1: Organisational survey questions
+
+Survey questions for the Organisational Survey described in *Chapters 2* and *3* were made available to lead investigators at each site. Respondents were given the opportunity to either respond via a web browser interface using an online survey tool, or respond via email through direct annotation of the paper survey form.
+
+```{r Appendix1, echo=FALSE, message=FALSE, warning=FALSE, dpi=300, fig.width=5}
+include_pdf("figures/appendix1/SurveyAppendix1.pdf", include_page = 1)
+include_pdf("figures/appendix1/SurveyAppendix1.pdf", include_page = 2)
+include_pdf("figures/appendix1/SurveyAppendix1.pdf", include_page = 3)
+include_pdf("figures/appendix1/SurveyAppendix1.pdf", include_page = 4)
+include_pdf("figures/appendix1/SurveyAppendix1.pdf", include_page = 5)
+```
+
+##### PAGE BREAK
+
+## Appendix 2: Patient study CRF
+
+The UK versions of the Case Record Forms (CRFs) for the patient study are presented here with help text annotations alongside in the right margin. Clinical anaesthetists would complete these CRFs on paper perioperatively and local investigators would later upload the data onto the online webtool. Minor changes were made to the CRFs to facilitate data collection in Australia and New Zealand.
+
+```{r Appendix2, echo=FALSE, message=FALSE, warning=FALSE, dpi=300, fig.width=5}
+include_pdf("figures/appendix2/Appendix 2 - CRF main EPICCS v1.2 20170201 (SOP annotated).pdf", include_page = 1)
+include_pdf("figures/appendix2/Appendix 2 - CRF main EPICCS v1.2 20170201 (SOP annotated).pdf", include_page = 2)
+include_pdf("figures/appendix2/Appendix 2 - CRF main EPICCS v1.2 20170201 (SOP annotated).pdf", include_page = 3)
+include_pdf("figures/appendix2/Appendix 2 - CRF main EPICCS v1.2 20170201 (SOP annotated).pdf", include_page = 4)
+include_pdf("figures/appendix2/Appendix 2 - CRF main EPICCS v1.2 20170201 (SOP annotated).pdf", include_page = 5)
+include_pdf("figures/appendix2/Appendix 2 - CRF main EPICCS v1.2 20170201 (SOP annotated).pdf", include_page = 6)
+include_pdf("figures/appendix2/Appendix 2 - CRF main EPICCS v1.2 20170201 (SOP annotated).pdf", include_page = 7)
+include_pdf("figures/appendix2/Appendix 2 - CRF main EPICCS v1.2 20170201 (SOP annotated).pdf", include_page = 8)
+include_pdf("figures/appendix2/Appendix 2 - CRF main EPICCS v1.2 20170201 (SOP annotated).pdf", include_page = 9)
+```
+
+##### PAGE BREAK
+
+## Appendix 3: Critical care occupancy CRF
+
+The UK versions of the Case Record Forms (CRFs) for the collecting the critical care occupancy data during the patient study are presented here with help text annotations alongside in the right margin. Investigators would complete these CRFs on paper at two timepoints during each day of patient recruitment and then would later upload the data onto the online webtool. Minor changes were made to the CRFs to facilitate data collection in Australia and New Zealand.
+
+```{r Appendix3, echo=FALSE, message=FALSE, warning=FALSE, dpi=300, fig.width=5}
+include_pdf("figures/appendix3/Appendix 3 - OccupancyCRF v0.9 20170201 (SOP annotated).pdf", include_page = 1)
+include_pdf("figures/appendix3/Appendix 3 - OccupancyCRF v0.9 20170201 (SOP annotated).pdf", include_page = 2)
+include_pdf("figures/appendix3/Appendix 3 - OccupancyCRF v0.9 20170201 (SOP annotated).pdf", include_page = 3)
+include_pdf("figures/appendix3/Appendix 3 - OccupancyCRF v0.9 20170201 (SOP annotated).pdf", include_page = 4)
+```
+
+##### PAGE BREAK
+
+## Appendix 4: Sample size considerations for the patient cohort study
+
+A power analysis was performed by Dr Mizan Khondoker (consulting statistician) to establish the sample size for the inpatient surgery cohort. A statistical power of 80% and significance of 0.05 (one-tailed) were assumed. Minimum sample sizes were estimated to detect effect sizes for the intervention of postoperative critical care on a primary outcome of day 7 POMS, which is a planned future study in SNAP-2: EPICCS, beyond the scope of this thesis. Calculations were performed using Stata/IC 12.1 (StataCorp, College Station, Texas, USA).
+
+There were no realistic estimates available in the literature to suggest the potential effect of critical care admission on reducing postoperative morbidity. However, using previous studies to guide the allocation proportions and estimates of baseline morbidity [@bennett-guerrero_use_1999; @grocott_postoperative_2007; @moonesinghe_survival_2014], calculations were performed based on an assumed morbidity rate of 30% on day 7 inpatients who were admitted postoperatively to the general ward and an assumed 15% relative risk reduction for patients electively admitted to critical care. The following other assumptions were also taken: an allocation ratio of 1:10 (critical care vs. ward care) [@pearse_identification_2006; @findlay_knowing_2011; @pearse_mortality_2012], R-squared (multiple correlation between the exposure and other covariates) = 10%, and a dropout rate of 1%. The calculated minimum sample size (n) required was 8,177. A number of other calculations were also performed with varying assumptions for the morbidity rates ranging from 15% to 30% and varying effect sizes (relative risk reductions ranging from 5% to 20%). The `sampsi` Stata command was used for these calculations (with separate adjustments for confounding and dropout).
+
+```{r PatientCohortSampleSize, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+#Set up a dataframe with the proportions
+sample_size_calc <- data.frame(p1 = c(0.15, 0.15, 0.15, 0.15, 0.20, 0.20, 0.20, 0.20, 0.25, 0.25, 0.25, 0.25, 0.30, 0.30, 0.30, 0.30), perc_reduction = c(0.05, 0.10, 0.15, 0.20, 0.05, 0.10, 0.15, 0.20, 0.05, 0.10, 0.15, 0.20, 0.05, 0.10, 0.15, 0.20))
+sample_size_calc$p2 <- sample_size_calc$p1 * (1 - sample_size_calc$perc_reduction)
+
+#Calculate the sample sizes
+sample_size_calc <- sample_size_calc %>% mutate(effect_size = ES.proportions(p1, p2)$h) %>% 
+  rowwise() %>%
+  mutate(n0 = power.proportions(h = effect_size, power = 0.8, sig.level = 0.05, type = "unequal", ratio = 10)$n) %>%
+  mutate(n1 = n0 * 1.11) %>%
+  mutate(n2 = n1/0.99) %>%
+  mutate(minimum = ceiling(n2))
+
+sample_size_calc %>% select(p1, perc_reduction, p2, minimum) %>% 
+  rename(`Proportion in General Ward (p1)` = "p1",
+         `% reduction in ICU` = "perc_reduction",
+         `Proportion in ICU (p2)` = "p2",
+         `Minimum sample size (n) required` = "minimum") %>%
+  pander(style = "rmarkdown", 
+         justify = c("center", "center", "center", "right"))
+```
+
+| Proportion in general ward (p1) | % reduction in ICU | Proportion in ICU (p2) | Minimum sample size (n) required |
+| :-----------------------------: | :----------------: | :--------------------: | -------------------------------: |
+| 0.15                            | 5%                 | 0.143                  |                          212,898 |
+| 0.15	                          | 10%                | 0.135                  |                           45,004 |
+| 0.15                            | 15%	               | 0.128                  |                         	20,350 |
+| 0.15                            | 20%                | 0.120                  |                           10,594 |
+| 0.20                            | 5%	               | 0.190                  |                        	 130,967 |
+| 0.20	                          | 10%                | 0.180                  |	                          31,906 |
+| 0.20                            | 15%                | 0.170                  |                        	  13,801 |
+| 0.20                            | 20%                | 0.160                  |	                           7,535 |
+| 0.25                            | 5%                 | 0.238                  |	                         106,954 |
+| 0.25                            | 10%                | 0.225                  |                           24,050 |
+| 0.25                            | 15%                | 0.213                  |                           10,730 |
+| 0.25                            | 20%                | 0.200                  |                            5,710 |
+| 0.30                            | 5%                 | 0.285                  |	                          76,824 |
+| 0.30	                          | 10%                | 0.270                  |                           18,820 |
+| **0.30**                        | **15%**            | **0.255**              |                        **8,177** |
+| 0.30	                          | 20%                | 0.240                  |                            4,489 |
+
+Table: Minimum sample sizes assuming morbidity rate = 15% to 30% (with 5% intervals) in the general ward, and 5%, 10%, 15% and 20% reduction in the group of patients referred to critical care. Calculations assume an allocation ratio 1:10 (critical care vs. ward), R-squared (multiple correlation between the exposure and other covariates) = 10 % and a dropout rate of 1%. Final sample size target chosen highlighted in **bold**.
+
+A 1% drop-out rate was included in calculations in order to account for the risk that in some cases, missing data variables may be present, either due to data-linkage issues or loss to follow-up. In 1 week, based on data from the SNAP-1 study [@walker_patient_2016], it was estimated that SNAP-2: EPICCS would be able to recruit >12,000 patients. 
+
+## Appendix 5: Poisson Models for case ascertainment and capture
+
+### Data quality assurance
+ 
+Quality assurance of the data to be used in study analyses is important for confidence in the outputs that arise in the study.
+
+There are 2 major obstacles to data quality in the study which were anticipated:
+
+> 1. Incomplete case capture
+> 2. Incomplete/missing data variables from individual patient records
+  
+#### Incomplete case capture
+
+```{r Appendix7_setup, include=FALSE}
+LoadToEnvironment <- function(RData, env = new.env()){
+  load(RData, env)
+  return(env) 
+}
+
+appendix.env <- LoadToEnvironment("../data/SNAP2_clean.RData")
+load("../data/SNAP2_ANZ_clean.RData", envir = appendix.env)
+
+weekly_counts <- appendix.env$weekly_counts
+weekly_ANZ_counts <- appendix.env$weekly_ANZ_counts
+
+weekly_counts <- bind_rows(weekly_counts, weekly_ANZ_counts)
+```
+
+For patient level data, in order to ascertain whether some sites may have inappropriately excluded a significant number of cases, Poisson regression models were constructed with the number of inpatient surgical cases expected for each site as the response variable. A number of models were constructed and a final Poisson model was chosen with the following predictor variables: total inpatient bed numbers, whether the hospital has a critical care unit and whether the hospital offers any tertiary services. Figure 8-1 shows a scatterplot of the number of inpatient surgical cases captured at each site against the number of inpatient beds, demonstrating a strong positive correlation between both variables (Pearson's r = `r cor(y = weekly_counts$sum, x = weekly_counts$hospitalBeds, use = "pairwise.complete.obs")`), additionally, the figure also illustrates the tendency for hospitals with critical care units to be larger (more hospital beds) and have a higher number of cases.
+
+```{r Appendix5_Fig1, message=FALSE, warning=FALSE, echo=FALSE, dpi=300, fig.cap="Figure 8-1: Total number of cases captured by hospital."}
+ggplot(weekly_counts, aes(x = hospitalBeds, y = sum, col = ccu)) + geom_point() +
+  labs(x = "Total inpatient hospital beds", 
+       y = "Cases captured",
+       title = "Case numbers captured",
+       col = "Critical care unit present") +
+  theme_classic() +
+  theme(legend.position = "bottom") 
+```
+
+In addition to the Poisson modelling used to identify sites which potentially under-reported data, on each day of the study, Principal Investigators (PIs) at each participating site also completed a survey which assessed qualitatively how well their site managed to capture all possible cases which fulfilled the study inclusion/exclusion criteria. A single question was asked for each study day: "Apart from patients who opted out, what proportion of eligible patients do you think your site missed during data collection for the main study today?"
+
+Possible responses to this question were categorical:
+
+> 1. None. We captured every last one.
+> 2. We might have missed a couple.
+> 3. We definitely missed a few.
+> 4. We missed a significant minority.
+> 5. We missed more than half.
+
+This qualitative survey was used in conjunction with the Poisson models to identify sites with particular problems capturing fata, and both were used to initiate a dialogue with PIs to clarify problems with case capture during the study.
+
+Using our final Poisson model, an expected (predicted) total number of cases captured at each site for the week was then computed. The prediction residual (actual case numbers subtracted from expected case numbers as calculated by the model) for each site, and the standard deviation of these residuals, was subsequently calculated. Sites with actual case numbers which fell outside of 2 standard deviations of the residual were then identified as potential outliers. Three hospitals were identified as being potential outliers through this process.
+
+Each of these three sites were then contacted to discuss their case capture rates and identify why and whether cases may have been missed from data collection. Qualitative surveys on the completeness of case capture (completed by the local collaborators for each day of the study) were then cross-checked for these two sites. These steps identified 2 sites which either stated that they had "missed more than half" of the possible cases that could have been included in the study in the majority of the 7 study recruitment days (Figure 8-2), and which also reported significantly lower cases than was expected in the statistical model. 
+
+The data submitted from these 2 sites were therefore considered lower-quality. However, the total number of cases contributed by these 2 sites was low (total n = `r weekly_counts %>% filter(SiteCode %in% c("RX1CC", "RDU01", "BOX")) %>% select(sum) %>% sum()`) and only accounted for only a small proportion of the total dataset (`r (weekly_counts %>% filter(SiteCode %in% c("RX1CC", "RDU01")) %>% select(sum) %>% sum())/nrow(patients_clean) * 100`%).
+
+```{r Appendix5_Fig2, message=FALSE, warning=FALSE, echo=FALSE, dpi=300, fig.cap="Figure 8-2: Site codes, and number of cases of the 3 sites (in red) identified as significant outliers reporting fewer than expected cases."}
+ggplot(weekly_counts, aes(x = hospitalBeds, y = sum)) + geom_point() +
+  geom_point(data = (weekly_counts %>% filter(SiteCode %in% c("RX1CC", "RDU01"))), aes(x = hospitalBeds, y = sum), col = "red") +
+  geom_text(aes(label = ifelse(SiteCode %in% c("RX1CC", "RDU01"), as.character(paste0(SiteCode, ", n = ", sum)), ""), hjust = -0.1, vjust = 1.1)) +
+  labs(x = "Total inpatient hospital beds", 
+       y = "Cases captured",
+       title = "Outliers (below expected cases submitted)",
+       col = "Critical care unit present") +
+  theme_classic() +
+  theme(legend.position = "bottom") 
+```
+
+### Missingness of data variables
+
+A total of `r length(names(patients_clean))` variables were collected for each surgical case. Each variable was examined separately for missingness. Overall, `r sum(patients_clean$RecordStatus == "10")/nrow(patients_clean) * 100`% of cases had complete data recorded (no inappropriately missing values). Some variables were not considered absolutely necessary minimum requirements, for example not all patients undergoing surgery have routine blood tests or radiological imaging taken prior to surgery, so cases without data recorded for these variables were considered appropriately missing. Individual data variables characteristics and missingness are available in the *Appendix 5*.
+
+##### PAGE BREAK
+
+## Appendix 6: Patient-level data variables and proportion of missing values
+
+A description of each variable from the entire SNAP-2: EPICCS dataset is presented here. Only variables collected from the CRF will be presented (i.e. no transformed or computed variables are included in this Appendix). Fields containing personal identifiable information (e.g. names, absolute dates including dates of birth and dates of surgery, etc) are not presented. Names of hospitals have been removed as they could be used indirectly to link to patients and individual hospital performance.
+
+```{r appendix_data_variables, warning=FALSE, message=FALSE, echo=FALSE, results='asis'}
+library(summarytools)
+
+patients_clean %>% select(-HashValue,
+                          -CaseId,
+                          -SiteName,
+                          -country,
+                          -RecordStatus,
+                          -contains("SectionStatus"),
+                          -S05PostopLOS,
+                          -S07PostopLOS,
+                          -contains("POMS"),
+                          -c(S02PlannedProcSeverity:SRS_mort)) %>% 
+  unclass() %>%
+  as.data.frame() %>%
+  mutate_at(vars(SiteCode,
+                 S02PlannedProcedureMainGroup,
+                 S02PlannedProcedureSubGroup,
+                 S02PlannedProcedure,
+                 S03MortalityEstimateOtherDetails,
+                 S03PreviouslyHadThisSurgeryCancelledRescheduledReasonOther,
+                 S03ReasonReferredForPostoperativeCriticalCareOtherDetails,
+                 S04CriticalUnexpectedEventsPerioperativelyYesDetails,
+                 S04ActualOperationPerformedMainGroup,
+                 S04ActualOperationPerformedSubGroup,
+                 S04ActualOperationPerformed,
+                 S04CriticalCareToRecoveryReasonsWhyOtherDetails),
+            funs(as.character(.))) %>%
+  mutate(S03RadiologicalFindings = recode(S03RadiologicalFindings, 
+                                          `FALSE` = "N",
+                                          `TRUE` = "Y")) %>%
+  dfSummary(., style = "grid", graph.col = FALSE, varnumbers = FALSE, max.distinct.values = 5,
+            trim.strings = TRUE, max.string.width = 10, valid.col = FALSE)
+```
+
+##### PAGE BREAK
+
+## Appendix 7: AXA-PPP procedure codes
+
+The reference manual for AXA-PPP Healthcare Specialist Procedure Codes classifies procedures on an ordinal scale of complexity of surgery ranging from Minor to Complex [@noauthor_axa_2016]. This scale has previously been used in the literature to distinguish between simple surgery, likely to cause minimal physiological insults to the patient, from more complex procedures which subject patients to greater stresses [@protopapa_development_2014; @wong_predicting_2017]. The codes classify over 2000 procedures with some examples below. 
+
+A full list of procedures can be found on AXA-PPP Healthcare website, https://online.axappphealthcare.co.uk/SpecialistForms/SpecialistCode.mvc/Print?source=contracted (last accessed: 01/10/2019).
+
+| AXA-PPP Severity codes | Example procedures |
+|:-----------------------|:-------------------|
+| **Minor**              | Dilation of stricture of rectum; change of cast under general anaesthetic. | 
+| **Intermediate**       | Laparoscopic repair of incisional or ventral hernia requiring mesh; closed reduction of fracture of short bone (including cast or percutaneous K-wires). |
+| **Major**              | Laparoscopic appendicectomy; closed reduction of fracture of long bone with external fixation (excluding fixation by cast or percutaneous K-wires). |
+| **Xmajor**             | Right hemicolectomy; locked intramedullary nailing of fractured long bone. | 
+| **Complex**            | Total excision of colon and ileorectal anastomosis; revision of uncemented or cemented total hip replacement without adjunctive procedures. |
+
+##### PAGE BREAK
+
+## Appendix 8: Computing environment used in the analyses
+
+For all statistical analyses in this thesis, `r version$version.string` (R Foundation for Statistical Computing, Vienna, Austria) was used. The following details the computing environment used to perform the analyses, along with the external packages and version numbers.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+sessionInfo() %>% pander::pander()
+```
+
+##### PAGE BREAK
+
+## Appendix 9:  Publications Associated With This Thesis
+
+### Chapter 2 & Chapter 4
+
+- Moonesinghe SR, **Wong DJN**, Farmer L, Shawyer R, Myles PS, Harris SK. SNAP-2 EPICCS: the second Sprint National Anaesthesia Project—EPIdemiology of Critical Care after Surgery: protocol for an international observational cohort study. BMJ Open. 2017 Sep 1;7(9):e017690. 
+
+- **Wong DJN**, Moonesinghe SR. The 2nd Sprint National Anaesthesia Project: Epidemiology of Critical Care provision after Surgery. Bulletin of The Royal College of Anaesthetists. 2016 Jan;(95):18–9. 
+
+- **Wong DJN**, Moonesinghe SR. SNAP-2: Epidemiology of Critical Care provision after Surgery (EPICCS) Coming to Your Hospital Soon! Bulletin of The Royal College of Anaesthetists. 2017 Mar;(102):18–9. 
+
+### Chapter 3
+
+- **Wong D**, Bedford J, Chazapis M, Farmer L, Saunders D, Harris S, et al. Postoperative critical care facilities in the UK: not as simple as 1-2-3. In: Abstracts of the AAGBI WSM London [Internet]. London, UK: Anaesthesia; 2018 [cited 2018 Feb 20]. p. 71. Available from: http://doi.wiley.com/10.1111/anae.14192
+
+- **Wong DJN**, Popham S, Wilson AM, Barneto LM, Lindsay HA, Farmer L, et al. Postoperative critical care and high-acuity care provision in the United Kingdom, Australia, and New Zealand. British Journal of Anaesthesia. 2019 Apr 1;122(4):460–9. 
+
+### Chapter 5
+
+- **Wong DJN**, Harris SK, Moonesinghe SR. Cancelled operations: a 7-day cohort study of planned adult inpatient surgery in 245 UK National Health Service hospitals. British Journal of Anaesthesia. 2018 Oct 1;121(4):730–8. 
+
+### Chapter 6
+
+- **Wong DJN**, Sahni A, Bedford JR, Harris SK, Moonesinghe SR. Man vs machine: how good are clinicians at predicting perioperative risk? In: Abstracts from the BJA Research Forum, May 2018 [Internet]. London, UK: British Journal of Anaesthesia; 2018 [cited 2018 Sep 11]. p. e28–9. Available from: https://bjanaesthesia.org/article/S0007-0912(18)30428-8/fulltext
+
+##### PAGE BREAK

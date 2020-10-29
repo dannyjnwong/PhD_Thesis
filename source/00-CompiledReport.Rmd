@@ -1,0 +1,60 @@
+---  
+title: "Postoperative critical care: resource availability, patient risk and other factors influencing referral and admission"
+subtitle: |
+  Dr Danny J. N. Wong\n
+  MBBS, BSc, MRCP, FRCA\n
+  University College London\n
+  PhD\n
+  2020\n
+author:
+- name: Dr Danny J. N. Wong
+  affiliation: Division of Surgery & Interventional Science, University College London
+bibliography: ../references/bib/SNAP2.bib
+csl: ../references/bib/vancouver.csl
+link-citations: yes
+output:
+  word_document:
+    toc: yes
+    reference_docx: styles_phd.docx
+---
+
+```{r compiled_report_setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, dpi = 300, fig.width = 8, fig.height = 6)
+```
+
+##### PAGE BREAK
+
+```{r child = '00-Front.Rmd'}
+```
+
+```{r child = '01-Introduction.Rmd'}
+```
+
+```{r child = '02-MethodsOverview.Rmd'}
+```
+
+```{r child = '03-OrgSurv.Rmd'}
+```
+
+```{r child = '04-PatientCohort.Rmd'}
+```
+
+```{r child = '05-DescEpi.Rmd'}
+```
+
+```{r child = '06-RiskPred.Rmd'}
+```
+
+```{r child = '07-PropensityCCUAdm.Rmd'}
+```
+
+```{r child = '08-Conclusions.Rmd'}
+```
+
+```{r child = '09-Reflections.Rmd'}
+```
+
+```{r child = '10-Appendix.Rmd'}
+```
+
+# References

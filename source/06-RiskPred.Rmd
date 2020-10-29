@@ -1,0 +1,1505 @@
+---
+title: 'Chapter 6: Predicting Risk in Inpatient Surgery'
+subtitle: "Performance of objective risk prediction tools and subjective clinical assessment"
+author: "Danny Wong"
+date: "02 July 2019"
+csl: ../references/bib/the-lancet.csl
+bibliography: ../references/bib/SNAP2.bib
+link-citations: yes
+description: "This is Chapter 6 of Danny's PhD Thesis"
+output: 
+  word_document:
+    reference_docx: styles.docx
+---
+
+# Predicting Risk in Inpatient Surgery
+
+```{r RiskPred_setup, echo=FALSE, warning=FALSE, message=FALSE, results="hide", include=TRUE}
+knitr::opts_chunk$set(echo = FALSE, dpi = 300)
+options(scipen=2, digits=2)
+
+#Load libraries and data
+library(tidyverse)
+library(knitr)
+library(tableone)
+library(pROC)
+library(rms)
+library(caret)
+library(PredictABEL)
+library(pander)
+library(DiagrammeR) #Needs ver. 0.9.2 to work
+library(DiagrammeRsvg)
+library(cowplot)
+library(nricens)
+source("../scripts/helper_functions/reclassification2.R")
+panderOptions('table.split.table', Inf)
+
+#Load data
+load("../data/SNAP2_combined_clean.Rdata") 
+
+#Load procedure list
+procedure_list <- read.csv("../data/SNAP2_procedurelist_specialty_coded.csv") %>% select(Code, Specialty)
+
+#Some data preprocessing, the same preprocessing steps as in Chapter 4
+patients_clean <- patients_clean %>% 
+  #Create a variable for whether the patients go to critical care postop
+  mutate(CCU_adm = (S07PlannedDayOfSurgeryIcuHduPacuAdmission == "Y" | 
+                      S07UnplannedDayOfSurgeryIcuHduPacuAdmission == "Y")) %>%
+  #Create an outcome variable (mortality at 30 days)
+  mutate(S07StillInHospitalPrimaryAdmissionAfterSurgery = replace(S07StillInHospitalPrimaryAdmissionAfterSurgery,
+                                                                  which(is.na(S07StillInHospitalPrimaryAdmissionAfterSurgery) &
+                                                                          S05PatientStillAliveAndInHospital == "N"), "N")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "A"), "A")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "D"), "D")) %>%
+  mutate(mort30 = (S07PostopLOS <= 30 & S07StatusAtDischarge == "D")) %>%
+  mutate(mort30 = replace(mort30, which(is.na(mort30) & S07StillInHospitalPrimaryAdmissionAfterSurgery == "Y"), FALSE)) %>%
+  #Create 60 day mortality
+  mutate(S07StillInHospitalPrimaryAdmissionAfterSurgery = replace(S07StillInHospitalPrimaryAdmissionAfterSurgery,
+                                                                  which(is.na(S07StillInHospitalPrimaryAdmissionAfterSurgery) &
+                                                                          S05PatientStillAliveAndInHospital == "N"), "N")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "A"), "A")) %>%
+  mutate(S07StatusAtDischarge = replace(S07StatusAtDischarge, which(is.na(S07StatusAtDischarge) & S05StatusAtDischarge == "D"), "D")) %>%
+  mutate(mort60 = (S07PostopLOS <= 60 & S07StatusAtDischarge == "D")) %>%
+  mutate(mort60 = replace(mort60, which(is.na(mort60) & S07StillInHospitalPrimaryAdmissionAfterSurgery == "Y"), FALSE)) %>%
+  #Winsorise postop length of stay to max 60 days
+  mutate(LOS = replace(S07PostopLOS, which(S07PostopLOS > 60), 60)) %>%
+  #Winsorise postop LOS for those still in hospital on Day 60 to 60 days
+  mutate(LOS = replace(LOS, 
+                       which(is.na(LOS) &
+                               S05PatientStillAliveAndInHospital == "Y"), 60)) %>%
+  #Decode procedure codes to obtain specialties
+  left_join(select(read.csv("../data/SNAP2_procedurelist_specialty_coded.csv"), 
+                   Code, specialty = Specialty), 
+            by = c("S02PlannedProcedure" = "Code")) %>%
+  mutate(specialty_recoded = recode(specialty, 
+                                    `Colorectal` = "GI", 
+                                    `UpperGI` = "GI", 
+                                    `Bariatric` = "GI",
+                                    `HPB` = "GI",
+                                    `Spine` = "Neuro-Spine",
+                                    `Neuro` = "Neuro-Spine",
+                                    `Urology` = "Gynaecology-Urology",
+                                    `Gynae` = "Gynaecology-Urology",
+                                    `Transplant` = "Other", 
+                                    `Endoscopic` = "Other", 
+                                    `IR` = "Other", 
+                                    `Cardiology` = "Other", 
+                                    `Opthalmic` = "Other",
+                                    `Plastics` = "Other",
+                                    `MaxFax-Dental` = "Other", 
+                                    `ENT` = "Other", 
+                                    `Endocrine` = "Other", 
+                                    `Breast` = "Other")) %>%
+  mutate(S02PlannedProcSeverity = recode(S02PlannedProcSeverity,
+                                         `Min` = "Minor",
+                                         `Int` = "Intermediate",
+                                         `Maj` = "Major",
+                                         `Xma` = "Xmajor", 
+                                         `Com` = "Complex")) %>%
+  mutate(S02OperativeUrgency = recode_factor(S02OperativeUrgency, 
+                                             `Ele` = "Elective",
+                                             `Exp` = "Expedited",
+                                             `U` = "Urgent",
+                                             `I` = "Immediate")) %>% 
+  mutate(Diabetes = case_when(S03Diabetes == "1" ~ "Y",
+                              S03Diabetes == "2D" ~ "Y",
+                              S03Diabetes == "2I" ~ "Y",
+                              S03Diabetes == "2O" ~ "Y",
+                              S03Diabetes == "N" ~ "N")) %>%
+  #Fix an issue where patients who are discharged before Day 7 have positive POMS morbidities
+  mutate_at(.vars = vars(S05O2Therapy:S05RegionalAnalgesia),
+            .funs = funs(replace(., which(LOS < 7 & . == "Y"), "N"))) %>%
+  mutate_at(.vars = vars(POMS:POMS_Pain),
+            .funs = funs(replace(., which(LOS < 7 & . == TRUE), FALSE))) %>%
+  mutate(S02PatientOrigin = replace(S02PatientOrigin,
+                                    which(S02PatientOrigin == "H" & S02PreopLOS > 0), "I"))
+
+#Some additional preprocessing specific to this chapter
+#Create a variable to indicate if only clinician assessment was used to predict risk
+patients_clean <- patients_clean %>% 
+  mutate(S01Age = as.numeric(S01Age)) %>%
+  mutate(SORT_mort_risk = arm::invlogit(SORT_mort),
+         pPOSSUM_mort_risk = arm::invlogit(pPOSSUM_mort),
+         SRS_mort_risk = arm::invlogit(SRS_mort)) %>%
+  #Recode the clinician predictions variable
+  mutate(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days = recode_factor(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days,
+                                                                          `L1` = "<1%",
+                                                                          `L2` = "1-2.5%",
+                                                                          `L6` = "2.6-5%",
+                                                                          `L10` = "5.1-10%",
+                                                                          `L50` = "10.1-50%", 
+                                                                          `G50` = ">50%",
+                                                                          .ordered = TRUE)) %>%
+  #Create a variable for clinical_only to indicate that clinical judgement alone or ASA alone was used
+  mutate(clinical_only = ((S03MortalityEstimateClinicalJudgment == TRUE |
+                             S03MortalityEstimateASAPSScore == TRUE) &
+                            S03MortalityEstimateDukeOtherActivityStatusIndex == FALSE &
+                            S03MortalityEstimateWalkTest == FALSE &
+                            S03MortalityEstimateCardiopulmonaryExerciseTesting == FALSE &
+                            S03MortalityEstimateFrailtyAssessment == FALSE &
+                            S03MortalityEstimateSurgicalRiskScale == FALSE &
+                            S03MortalityEstimateSurgicalOutcomeRiskTool == FALSE &
+                            S03MortalityEstimateEuroSCORE == FALSE &
+                            S03MortalityEstimatePOSSUM == FALSE &
+                            S03MortalityEstimatePPOSSUM == FALSE &
+                            S03MortalityEstimateSurgeryPPOSSUM == FALSE &
+                            S03MortalityEstimateOther == FALSE)) %>%
+  #Create a mid-point value of the risk prediction range for clinical assessment
+  mutate(clin_pred = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.005,
+                            `1-2.5%` = 0.0175,
+                            `2.6-5%` = 0.0375,
+                            `5.1-10%` = 0.075,
+                            `10.1-50%` = 0.3,
+                            `>50%` = 0.75))
+
+#Need to establish the number of cases excluded because of missing data
+#First these are all the variables that go into pPOSSUM, SORT and SRS.
+
+#Missing Age
+patients_strobe <- patients_clean %>% 
+  filter(!is.na(S01Age))
+strobe_table <- data.frame(Description = "Total patients", 
+                           N = nrow(patients_clean)) %>%
+  rbind(data.frame(Description = "Missing age",
+                   N = nrow(patients_strobe)))
+
+#Missing ASA
+patients_strobe <- patients_strobe %>%
+  filter(!is.na(S03AsaPsClass)) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing ASA-PS grade",
+                   N = nrow(patients_strobe)))
+
+#Missing NCEPOD urgency
+patients_strobe <- patients_strobe %>%
+  filter(!is.na(S02OperativeUrgency)) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing NCEPOD urgency",
+                   N = nrow(patients_strobe)))
+
+#Missing surgical procedure details
+patients_strobe <- patients_strobe %>%
+  filter(!(is.na(S02PlannedProcSeverity) | 
+              is.na(S02PlannedProcedure))) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing surgical procedure details",
+                   N = nrow(patients_strobe))) 
+
+#Missing malignancy status
+patients_strobe <- patients_strobe %>%
+  filter(!(is.na(S04Malignancy) |
+             is.na(S03PastMedicalHistoryMetastaticCancerCurrent))) 
+strobe_table <- strobe_table %>%
+  rbind(data.frame(Description = "Missing malignancy status",
+                   N = nrow(patients_strobe))) 
+              
+#Missing 30-day mortality outcome data
+patients_strobe <- patients_strobe %>% 
+  filter(!(is.na(mort30)))
+strobe_table <- rbind(strobe_table, 
+                      data.frame(Description = "Missing mortality outcome data",
+                                 N = nrow(patients_strobe)))
+
+patients_complete <- patients_strobe
+
+#Create a dataframe for patients who only received predictions based on clinical assessment
+clinical_only <- patients_complete %>% filter(clinical_only == TRUE)
+
+#Wrangle component variables for SORT
+clinical_only <- clinical_only %>% 
+  mutate(AgeCat = cut(as.numeric(S01Age), breaks = c(0,64,79, Inf))) %>%
+  mutate(ASA = recode(S03AsaPsClass,
+                      `I` = "I or II",
+                      `II` = "I or II",
+                      `III` = "III",
+                      `IV` = "IV",
+                      `V` = "V")) %>%
+  mutate(OpUrgency = S02OperativeUrgency) %>%
+  left_join(procedure_list, by = c("S02PlannedProcedure" = "Code")) %>%
+  mutate(Specialty = ifelse(Specialty %in% c("Bariatric", "Colorectal", "UpperGI", "HPB", "Thoracic", "Vascular"), 1, 0)) %>%
+  mutate(OpSeverity = recode(S02PlannedProcSeverity,
+                             `Xma` = "Xma/Com", 
+                             `Com` = "Xma/Com")) %>%
+  mutate(Malignancy = ifelse((S04Malignancy %in% c("MDM", "MNM", "PM", "Y", "1")), 1, 0))
+
+clinical_plus_others <- filter(patients_complete, clinical_only == FALSE)
+```
+
+```{r RiskPred_ext_val, echo=FALSE, warning=FALSE, message=FALSE, results="hide", include=FALSE}
+#Calibration and discrimination for the whole patient dataset
+#SORT
+val.prob(y = patients_complete$mort30, p = arm::invlogit(patients_complete$SORT_mort),
+         xlab = "Predicted Probability (SORT)")
+SORT_roc <- roc(response = patients_complete$mort30, 
+                predictor = arm::invlogit(patients_complete$SORT_mort))
+patients_temp <- patients_complete %>% select(mort30, SORT_mort) %>% drop_na()
+generalhoslem::logitgof(obs = patients_complete$mort30, 
+                        exp = arm::invlogit(patients_complete$SORT_mort))
+
+#PPOSSUM
+val.prob(y = patients_complete$mort30, p = arm::invlogit(patients_complete$pPOSSUM_mort),
+         xlab = "Predicted Probability (pPOSSUM)")
+pPOSSUM_roc <- roc(response = patients_complete$mort30, 
+                   predictor = arm::invlogit(patients_complete$pPOSSUM_mort))
+patients_temp <- patients_complete %>% select(mort30, pPOSSUM_mort) %>% drop_na()
+generalhoslem::logitgof(obs = patients_temp$mort30, 
+                        exp = arm::invlogit(patients_temp$pPOSSUM_mort))
+
+#SRS
+val.prob(y = patients_complete$mort30, p = arm::invlogit(patients_complete$SRS_mort),
+         xlab = "Predicted Probability (SRS)")
+SRS_roc <- roc(response = patients_complete$mort30, 
+               predictor = arm::invlogit(patients_complete$SRS_mort))
+patients_temp <- patients_complete %>% select(mort30, SRS_mort) %>% drop_na()
+generalhoslem::logitgof(obs = patients_temp$mort30, 
+                        exp = arm::invlogit(patients_temp$SRS_mort))
+
+#ASA
+ASA_roc <- roc(response = patients_complete$mort30, 
+               predictor = factor(patients_complete$S03AsaPsClass, 
+                                  levels = c("I", "II", "III", "Iv", "V"), 
+                                  ordered = TRUE))
+```
+
+```{r RiskPred_clinical_performance, echo=FALSE, warning=FALSE, message=FALSE, results="hide", include=FALSE}
+clinical_only_rms <- clinical_only %>%
+  mutate(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days = factor(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, ordered = FALSE)) %>%
+  mutate(ASA = as.character(ASA, ordered = FALSE)) %>%
+  mutate(SORT_mort_risk = SORT_mort_risk * 100) %>%
+  select(CaseId, mort30, SORT_mort_risk, S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, AgeCat, ASA, OpUrgency, Specialty, OpSeverity, Malignancy)
+
+lrm_SORT_clin2 <- lrm(mort30 ~ SORT_mort_risk + S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                          data = clinical_only_rms,
+                          x = TRUE,
+                          y = TRUE)
+lrm_SORT_clin2
+
+lrm_SORT_clin3 <- lrm(mort30 ~ AgeCat + ASA + OpUrgency + Specialty + OpSeverity + Malignancy +
+                        S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                          data = clinical_only_rms, maxit = 1000,
+                          x = TRUE,
+                          y = TRUE)
+lrm_SORT_clin3
+
+#Compute logistic model based only on SORT variables
+logit_SORT_refit <- glm(mort30 ~ AgeCat + ASA + OpUrgency + Specialty + OpSeverity + Malignancy,
+                        data = clinical_only_rms, family = binomial)
+
+
+clinical_only_rms$predicted <- predict(lrm_SORT_clin2, type = "fitted")
+
+clinical_only_rms <- clinical_only_rms %>% select(CaseId, mort30, predicted) %>%
+  as.data.frame()
+
+cal_lrm <- PresenceAbsence::calibration.plot(DATA = clinical_only_rms,
+                                             which.model = 1,
+                                             na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                             main = "Combined lrm",
+                                             ylab = "Observed Mortality", 
+                                             xlab = "Predicted Mortality") %>%
+  drop_na()
+
+#Calibrate and validate
+set.seed(20180912)
+bootval_SORT_clin2 <- validate(lrm_SORT_clin2, B = 1000)
+bootval_SORT_clin2
+
+bootval_SORT_clin2["Dxy", "index.corrected"]/2 + 0.5
+
+set.seed(20180912)
+bootcal_SORT_clin2 <- calibrate(lrm_SORT_clin2, B = 1000, predy = seq(0, 1, length = 50))
+plot(bootcal_SORT_clin2)
+
+clinical_only_rms$predicted_refitted <- predict(lrm_SORT_clin3, type = "fitted")
+
+clinical_only_rms <- clinical_only_rms %>% select(CaseId, mort30, predicted_refitted) %>%
+  as.data.frame()
+
+cal_lrm <- PresenceAbsence::calibration.plot(DATA = clinical_only_rms,
+                                             which.model = 1,
+                                             na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                             main = "Combined lrm_refitted",
+                                             ylab = "Observed Mortality", 
+                                             xlab = "Predicted Mortality") %>%
+  drop_na()
+
+#Calibrate and validate
+set.seed(20180912)
+bootval_SORT_clin3 <- validate(lrm_SORT_clin3, B = 1000)
+bootval_SORT_clin3
+
+bootval_SORT_clin3["Dxy", "index.corrected"]/2 + 0.5
+
+set.seed(20180912)
+bootcal_SORT_clin3 <- calibrate(lrm_SORT_clin3, B = 1000, predy = seq(0, 1, length = 50))
+plot(bootcal_SORT_clin3)
+
+
+#Create a test dataframe with prediction outputs and patient outcomes to assess NRI
+test.df <- data.frame(mort30 = clinical_only$mort30,
+                     phat.clinical = clinical_only$clin_pred,
+                     phat.sort_clinical = predict(lrm_SORT_clin2, type = "fitted"),
+                     phat.sort = clinical_only$SORT_mort_risk) %>%
+  drop_na()
+
+clinical_roc <- roc(response = test.df$mort30,
+                    predictor = test.df$phat.clinical)
+SORT2_roc <- roc(response = test.df$mort30, 
+                 predictor = test.df$phat.sort)
+clinicalSORT_roc <- roc(response = test.df$mort30, 
+                 predictor = test.df$phat.sort_clinical)
+
+#Added analysis from PhD viva, suggested refit the model with base SORT variables and see if clinical assessment still added value
+
+#Predictions
+clinical_only_rms$refitted_SORT <- predict(logit_SORT_refit, type = "response")
+clinical_only_rms$refitted_combined <- predict(lrm_SORT_clin3, type = "fitted")
+
+#AUROC
+SORT_refitted_roc <- roc(response = clinical_only_rms$mort30,
+                    predictor = clinical_only_rms$refitted_SORT)
+
+combined_refitted_roc <- roc(response = clinical_only_rms$mort30,
+                    predictor = clinical_only_rms$refitted_combined)
+```
+
+National and international guidelines in perioperative care recommend that the estimation of clinical risk should guide treatment decisions during a patient’s surgical pathway [@anderson_higher_2011; @fleisher_2014_2014]. When a patient has been identified as high-risk, admission to postoperative critical care might serve to improve patient outcomes [@khuri_determinants_2005]. Decisions to directly admit patients to critical care after surgery based on their perceived risk can have substantial impact on individual patients: either through exposing them to increased intensity of medical interventions and increased invasive monitoring with their own associated complications, or through preventing the development of deleterious complications which may impact on longer-term health and quality of life. These decisions may also have wider implications on healthcare systems: for example, critical care is a finite resource, with competition for beds between surgical and emergency medical admissions; to that end, the lack of availability of a postoperative critical care bed is a risk factor for last-minute cancellation, which brings with it adverse consequences for both patients and the healthcare providers [@wong_cancelled_2018]. Thus, there is a need to accurately stratify patient risk, so as to make the most of limited resources and improve perioperative outcomes. 
+
+There are numerous methods available to help clinicians estimate perioperative mortality risk, including frailty indices [@partridge_frailty_2012; @mcguckin_association_2018], measures of functional capacity such as the Duke Activity Status Index and cardiopulmonary exercise testing [@moran_role_2016; @wijeysundera_assessment_2018], and dozens of risk prediction scores and models [@moonesinghe_risk_2013]. Of these, the Physiological and Operative Score for the enUmeration of Mortality and Morbidity (POSSUM) and its Portsmouth variant (P-POSSUM), both developed for predicting risks in heterogenous surgical cohorts, remain among the most widely validated in international patient cohorts [@copeland_possum:_1991; @prytherch_possum_1998]. Other less well-known tools such as the Surgical Risk Scale (SRS) and the Surgical Outcome Risk Tool (SORT) are also available for routine clinical use [@sutton_surgical_2002; @protopapa_development_2014; @marufu_prediction_2016].
+
+Despite the myriad of available choices, the extent to which risk prediction tools are used in routine clinical practice remains unclear. Further, there remains equipoise over which tool is most accurate, and in particular, how objective risk assessment compares with (and adds value to) subjective clinical assessment alone.
+
+Therefore in this chapter, I performed an analysis using the patient data from SNAP-2: EPICCS that has been described in *Chapter 4*, with the following aims: 1) to describe the frequency and types of perioperative risk prediction tools used in routine practice in the United Kingdom (UK), Australia and New Zealand; 2) to externally validate and compare the performance of the P-POSSUM, SRS, SORT, ASA in the SNAP-2: EPICCS patient cohort; 3) to test the performance of subjective clinical assessment; and 4) to investigate whether risk prediction tools add value to subjective clinical assessment.
+
+## Methods
+
+The patient dataset from the Second Sprint National Anaesthesia Project: EPIdemiology of Critical Care provision after Surgery (SNAP-2: EPICCS) study described in *Chapter 4* was used in the analyses presented in this chapter. The full methodology of SNAP-2: EPICCS was previously reported in *Chapter 2*, but as a reminder, patients were recruited from hospitals in the UK, Australia and New Zealand via established research networks. All patients undergoing inpatient surgery (defined as a procedure requiring the care of an anaesthetist and requiring an overnight stay in hospital) during a one-week period were eligible, and patients were recruited between 21&ndash;27 March 2017 in the UK, 21&ndash;27 June 2017 in Australia, and 6&ndash;13 September 2017 in New Zealand.
+
+### Data Variables
+
+Patient demographic and perioperative variables were prospectively collected by clinicians providing routine clinical care at the time of surgery. Within these collected data were variables which comprise the predictor covariates for the following previously-validated risk prediction models: the American Society of Anesthesiologists Physical Status score (ASA-PS), the Portsmouth-Physiology and Operative Severity Score for the enUmeration of Mortality (P-POSSUM), Surgical Risk Scale (SRS), and Surgical Outcome Risk Tool (SORT) [@cullen_asa_1994; @prytherch_possum_1998; @sutton_surgical_2002; @protopapa_development_2014]. Additionally, surgical and anaesthesia teams were asked preoperatively to predict their patients' mortality risk with the following question, "*What is the estimate of the perioperative team of the risk of death within 30 days?*"; the possible responses to this question were 6 ordered categorical options (<1%, 1&ndash;2.5%, 2.6&ndash;5%, 5.1&ndash;10%, 10.1&ndash;50%, and >50% risk of 30-day mortality). Perioperative teams were then asked to record how they arrived at this estimate, whether based on clinical judgement alone, or in conjunction with one or more other formal risk assessment tools. Inpatient 30-day mortality was the primary outcome for this analysis, recorded by local clinical teams who followed-up each patient after surgery.
+
+### Statistical Analysis
+
+Descriptive statistics of the patients recruited and a breakdown of the tools used by clinicians in making risk predictions are reported. Three inferential analyses were then performed: the first using the entire patient dataset, and the second and third omitting the patients in whom an objective risk assessment tool was used to predict perioperative risk (Figure 6-1, data flow diagram). For the first analysis, an external validation of the ASA-PS, P-POSSUM, SRS and SORT risk prediction tools was conducted. The second analysis, the performance of subjective clinical assessment (defined as either using clinical judgement and/or ASA-PS scoring) was compared against the best performing risk tool identified within the preceding step. In the third analysis, the added value of combining subjective clinical assessment with the best performing risk tool was evaluated, by constructing a logistic regression model with predictor variables from both sources.
+
+#### External validation of existing risk prediction models
+
+Predicted risks of postoperative mortality for all patients in the dataset were computed using P-POSSUM, SRS and SORT. The performance of each model for predicting mortality risk in the international patient sample was assessed on calibration and discrimination in accordance with the Transparent Reporting of a multivariable prediction model for Individual Prognosis Or Diagnosis (TRIPOD) recommendations [@moons_transparent_2015]. Calibration of the risk model predictions were then assessed by plotting observed mortality proportions against predicted probabilities, calculating the calibration slope, and by the Hosmer-Lemeshow goodness-of-fit test [@steyerberg_assessing_2010; @hosmer_comparison_1997]. Discrimination was assessed by calculating the area under the Receiver Operating Characteristic curve (AUROC) for each model [@swets_measuring_1988]. AUROC values were compared using DeLong's test for two correlated ROC curves [@delong_comparing_1988].
+
+#### Defining and evaluating subjective clinical assessment
+
+For the second analysis, only patients in whom subjective clinical assessment alone was used to predict the risk of 30-day mortality were included. Subjective clinical assessment was defined as either clinical judgement (as recorded on the CRF), or ASA-PS grading used alone, or in combination with each other. Subjective clinical assessment was then evaluated on calibration and discrimination. Point estimates of risk prediction were taken as the mid-point of the predicted risk intervals provided by clinicians (i.e. 0.5% for the interval <1%, 1.75% for the interval 1&ndash;2.5%, 3.75% for the interval 2.6&ndash;5%, and so on), and the proportion of observed mortality in each of these risk categories was calculated. Calibration was then assessed graphically by plotting the observed mortality proportions against the mid-points of clinician predicted risk intervals. The performance subjective clinical assessment was then compared against the performance of the best performing risk prediction model, using AUROC, the continuous net reclassification improvement statistic (NRI) [^NRI], Brier Score and Nagelkerke’s $R^2$ [@steyerberg_assessing_2010]. 
+
+[^NRI]: The NRI quantifies the proportion of individuals whose predictions improve in accuracy (positive reclassification) subtracted by the proportion whose predictions worsened in accuracy (negative reclassification), when using one prediction model versus another [@pencina_evaluating_2008]. An NRI >0 indicates an overall improvement, <0 an overall deterioration, and zero no difference in prediction accuracy.
+
+#### Modelling combined information from subjective clinical assessments and risk prediction tools
+
+For the third analysis, a logistic regression model was fitted with two variables: the subjective clinical assessment of risk, and the mortality prediction from the risk prediction tool, according to the following logit formula:  $ln(R∕(1−R)) = \beta_0 + \beta_1 X_\text{subjective} + \beta_2 X_\text{objective}$, where $R$ is the probability of 30-day mortality, $\beta_0, \beta_1, \beta_2$ are the model coefficients, $X_\text{subjective}$ is the subjective clinical assessment (6 ordered categories, as above), and $X_\text{objective}$ is the risk of mortality as predicted using best performing risk prediction model. The latter was performed to investigate whether clinical assessments could be improved using the added information provided by risk models. A bootstrapped internal validation of this combined model with 1,000 repetitions was performed to obtain optimism-corrected estimates of its performance [@harrell_regression_2001; @moons_transparent_2015]. The performance of this model was then separately compared to the performance of subjective assessment and the best performing risk model alone.
+
+This process was then repeated with two further models fitted as above, but with the component predictor variables of the best performing risk prediction model as independent predictor variables with and without the variable for subjective clinical assessment, i.e. according to the following formula  $ln(R∕(1−R)) = \beta_0 + \beta_1 X_\text{objective_1} + ... + \beta_n X_\text{objective_n} + + \beta_{n+1} X_\text{subjective}$, where $\beta_0, \beta_1, \beta_2, ..., \beta_n, \beta_{n+1}$ are the model coefficients, and $X_\text{objective_1}, ..., X_\text{objective_n}$ are the component predictor variables from the best performing objective model. The performance of these two further models were then compared to determine if the addition of subjective clinical assessment added value to the prediction.
+
+A final model was then chosen from this process on the basis of clinical applicability.
+
+#### Missing data
+
+To predict risk using P-POSSUM, physiological data variables categorised into ranges are required (e.g. blood biochemistry, haematological tests). However, many patients deemed clinically fit for surgery routinely present to their operations without having undergone blood test investigations preoperatively [@nice_routine_2016]. Therefore, in cases where physiological data were missing for P-POSSUM risk variables, normal physiological ranges were imputed. After imputing data in this way, analysis was performed on all cases bar those with missing data for the remaining variables, as the proportion of cases with missing data in the remaining variables was deemed to be low (`r 100 - ((nrow(patients_complete)/nrow(patients_clean)) * 100)`% of total cases) [@graham_analysis_2012].
+
+#### Sensitivity analyses
+
+Three sensitivity analyses were performed. In the first, the analyses were repeated in a sub-group of high-risk patients, defined according to previously published criteria based on age, type of surgery and clinical risk factors [@wijeysundera_assessment_2018]. Second, the impact on subjective clinical assessment accuracy of using objective risk tools was evaluated, by computing the performance (discrimination, calibration) of subjective clinical assessment in the sub-group of patients whose risk estimates were not solely informed by clinical judgement. Third, the analyses were each repeated in the UK and Australian/NZ cohorts separately to investigate the potential for geographical influences in patient profiles and clinical practice on the results.
+
+## Results
+
+### Patient cohort
+
+A full description of the patient cohort characteristics have been presented in *Chapter 4* and 5. After imputing normal range values for missing P-POSSUM physiology predictors, `r nrow(patients_complete)` (`r nrow(patients_complete)/nrow(patients_clean) * 100`%) cases had complete data for the remaining variables and were used for external validation of the P-POSSUM, SRS and SORT risk prediction models (Figure 6-1). There were `r table(patients_complete$mort30)["TRUE"]` deaths within 30 days of surgery (`r table(patients_complete$mort30)["TRUE"]/nrow(patients_complete) * 100`%). Table 6-1 summarises the characteristics for the patients included in the analyses presented in this chapter, stratified by 30-day mortality.
+
+```{r RiskPred_Fig6_1_strobe, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figure 6-1: STROBE flow diagram of patients included and excluded from this analysis."}
+#Set up the contents for each box
+a1 <- paste0('Total available patients\nfrom ',
+             length(unique(patients_clean$SiteCode)),
+             ' hospitals\n(n = ', 
+             formatC(nrow(patients_clean), big.mark = ','), 
+             ')')
+b1 <- ''
+c1 <- paste0('Included for risk model\nexternal validation analysis\n(n = ',
+             formatC(nrow(patients_complete), big.mark = ','),
+             ')')
+d1 <- ''
+e1 <- paste0('Included for clinician prediction\nperformance analysis and\nclinician + risk prediction tool\ncombined modelling (n = ',
+             formatC(nrow(clinical_only), big.mark = ','),
+             ')')
+a2 <- ''
+b2 <- paste0('Total excluded (n = ',
+             strobe_table[1,2] - strobe_table[7,2],
+             '):\n\n\t',
+             'Missing age (n = ', 
+             strobe_table[1,2] - strobe_table[2,2], 
+             ')\n\t',
+             'Missing ASA-PS (n = ', 
+             strobe_table[2,2] - strobe_table[3,2], 
+             ')\n\t',
+             'Missing NCEPOD urgency (n = ', 
+             strobe_table[3,2] - strobe_table[4,2], 
+             ')\n\t',
+             'Missing surgical procedure details (n = ', 
+             strobe_table[4,2] - strobe_table[5,2], 
+             ')\n\t',
+             'Missing malignancy status (n = ', 
+             strobe_table[5,2] - strobe_table[6,2], 
+             ')\n\t',
+             'Missing 30-day mortality outcome (n = ',
+             strobe_table[6,2] - strobe_table[7,2],
+             ')')
+c2 <- ''
+d2 <- paste0('Excluded:\n\tClinician predictions aided\n\tby other tools (n = ',
+             formatC(nrow(patients_complete) - nrow(clinical_only), big.mark = ','),
+             ')')
+e2 <- ''
+
+ndf <- create_node_df(
+  n = 10,
+  label = c(a1, b1, c1, d1, e1, #Column 1
+            a2, b2, c2, d2, e2), #Column 2
+  style = c('solid', 'invis', 'solid', 'invis', 'solid', #Column 1
+            'invis', 'solid', 'invis', 'solid', 'invis'), #Column 2
+  shape = c('box', 'point', 'box', 'point', 'box', #Column 1 
+            'plaintext', 'box', 'point', 'box', 'point'), #Column 2
+  width = c(3, 0.001, 3, 0.001, 3.5, #Column 1
+            2, 4, 0.001, 3, 0.001), #Column 2
+  height = c(1, 0.001, 1, 0.001, 1.2, #Column 1
+             1, 2, 0.001, 1, 0.001), #Column 2
+  fontsize = c(rep(14, 10)),
+  fontname = c(rep('Helvetica', 10)),
+  penwidth = 1.5,
+  fixedsize = 'true')
+
+edf <- create_edge_df(
+  from = c(1, 2, 3, 4, #Column 1
+           6, 7, 8, 9, #Column 2
+           2, 4 #Horizontals
+           ),
+  to = c(2, 3, 4, 5, #Column 1
+         7, 8, 9, 10, #Column 2
+         7, 9 #Horizontals
+         ),
+  arrowhead = c('none', 'normal', 'none', 'normal', #Column 1
+                'none', 'none', 'none', 'none', #Column 2
+                'normal', 'normal' #Horizontals
+                ),
+  color = c('black', 'black', 'black', 'black', #Column 1
+            '#00000000', '#00000000', '#00000000', '#00000000', #Column 2
+            'black', 'black' #Horizontals
+            ),
+  constraint = c(rep('true', 8), #Columns
+                 rep('false', 2) #Horizontals
+                 )
+)
+  
+g <- create_graph(ndf,
+                  edf,
+                  attr_theme = NULL)
+
+#render_graph(g)
+
+export_graph(g, file_name = "figures/RiskPred_Fig6_1_strobe.png", width = 1600)
+
+export_graph(g, file_name = "figures/RiskPred_Fig6_1_strobe.pdf")
+
+knitr::include_graphics("figures/RiskPred_Fig6_1_strobe.png")
+```
+
+```{r RiskPred_table6-1, echo=FALSE, message=FALSE, warning=FALSE}
+#Table 1
+table6_1a <- CreateTableOne(vars = c("S01Gender",
+                                     "S01Age",
+                                     "S02OperativeUrgency",
+                                     "S03AsaPsClass",
+                                     "S02PlannedProcSeverity",
+                                     "specialty_recoded",
+                                     "S03PastMedicalHistoryCoronaryArteryDisease",
+                                     "S03PastMedicalHistoryCongestiveCardiacFailure",
+                                     "S03PastMedicalHistoryMetastaticCancerCurrent",
+                                     "S03PastMedicalHistoryDementia",
+                                     "S03PastMedicalHistoryCOPD",
+                                     "S03PastMedicalHistoryPulmonaryFibrosis",
+                                     "S03Diabetes",
+                                     "S03PastMedicalHistoryLiverCirrhosis",
+                                     "S03PastMedicalHistoryRenalDisease",
+                                     "S07PostopLOS",
+                                     "SORT_mort_risk",
+                                     "pPOSSUM_mort_risk",
+                                     "SRS_mort_risk",
+                                     "clinical_only"),
+                            strata = "mort30",
+                            data = patients_complete)
+table6_1b <- CreateTableOne(vars = c("S01Gender",
+                                     "S01Age",
+                                     "S02OperativeUrgency",
+                                     "S03AsaPsClass",
+                                     "S02PlannedProcSeverity",
+                                     "specialty_recoded",
+                                     "S03PastMedicalHistoryCoronaryArteryDisease",
+                                     "S03PastMedicalHistoryCongestiveCardiacFailure",
+                                     "S03PastMedicalHistoryMetastaticCancerCurrent",
+                                     "S03PastMedicalHistoryDementia",
+                                     "S03PastMedicalHistoryCOPD",
+                                     "S03PastMedicalHistoryPulmonaryFibrosis",
+                                     "S03Diabetes",
+                                     "S03PastMedicalHistoryLiverCirrhosis",
+                                     "S03PastMedicalHistoryRenalDisease",
+                                     "S07PostopLOS",
+                                     "SORT_mort_risk",
+                                     "pPOSSUM_mort_risk",
+                                     "SRS_mort_risk",
+                                     "clinical_only"),
+                            data = patients_complete)
+skewed_var <- c("S01Age", "S07PostopLOS", "SORT_mort_risk", "pPOSSUM_mort_risk", "SRS_mort_risk")
+
+cbind(print(table6_1b, nonnormal = skewed_var, 
+            printToggle = FALSE,
+            test = FALSE), 
+      print(table6_1a, nonnormal = skewed_var, 
+            printToggle = FALSE,
+            test = FALSE)) %>%
+  pander("Table 6-1: Baseline patient demographics stratified by 30-day mortality. For surgical specialty classifications: 'GI' includes colorectal, upper gastrointestinal tract, bariatric and hepato-pancreato-biliary surgery, and 'Other' includes solid organ transplants, ophthalmic, plastic, maxillofacial/dental, ear-nose-throat, endocrine and breast surgery, as well as interventional radiology, interventional cardiology and endoscopic procedures requiring anaesthetic support.")
+```
+
+Multiple methods were used to estimate patient risk preoperatively (Table 6-2); however, in most cases subjective clinical assessment alone was used (n = `r nrow(clinical_only)`, `r nrow(clinical_only)/nrow(patients_complete) * 100`%).
+
+```{r RiskPred_table6-2, warning=FALSE, echo=FALSE, message=FALSE}
+table6_2 <- CreateTableOne(vars = c("S03MortalityEstimateClinicalJudgment",
+                                    "S03MortalityEstimateASAPSScore",
+                                    "S03MortalityEstimateDukeOtherActivityStatusIndex",
+                                    "S03MortalityEstimateWalkTest",
+                                    "S03MortalityEstimateCardiopulmonaryExerciseTesting",
+                                    "S03MortalityEstimateFrailtyAssessment",
+                                    "S03MortalityEstimateSurgicalRiskScale",
+                                    "S03MortalityEstimateSurgicalOutcomeRiskTool",
+                                    "S03MortalityEstimateEuroSCORE",
+                                    "S03MortalityEstimatePOSSUM",
+                                    "S03MortalityEstimatePPOSSUM",
+                                    "S03MortalityEstimateSurgeryPPOSSUM",
+                                    "S03MortalityEstimateOther"), data = patients_complete)
+# strata = "S03PerioperativeTeamOfTheRiskOfDeathWithin30Days")
+print(table6_2, printToggle = FALSE) %>% pander(caption = "Table 6-2: Breakdown of information sources used by clinician in estimating 30-day mortality. Clinical teams could select one or more categories, percentages (in parentheses) therefore do not sum to 100%.")
+```
+
+### External validation of existing risk prediction models
+
+SORT was the best-calibrated of the models externally validated in this analysis, however all tended to overpredict risk (Figures 6-2A to 6-2C). The Hosmer-Lemeshow test showed a significant deviation from the line of unity for all three models (p-values all <0·0001 for SORT, P-POSSUM, and SRS). All models exhibited good-to-excellent discrimination (Figure 6-2D). SORT performed the best with an AUROC of `r SORT_roc$auc` (95% confidence interval: `r ci(SORT_roc)[1]`&ndash;`r ci(SORT_roc)[3]`), followed by P-POSSUM (AUROC = `r pPOSSUM_roc$auc`, 95% CI: `r ci(pPOSSUM_roc)[1]`&ndash;`r ci(pPOSSUM_roc)[3]`), and SRS (AUROC = `r SRS_roc$auc`, 95% CI: `r ci(SRS_roc)[1]`&ndash;`r ci(SRS_roc)[3]`). The AUROC for SORT was significantly better than SRS (p = `r roc.test(SORT_roc, SRS_roc)$p.value`), but not P-POSSUM (p = `r roc.test(SORT_roc, pPOSSUM_roc)$p.value`). 
+
+```{r RiskPred_Fig6_2_prep, echo=FALSE, message=FALSE, warning=FALSE, results="hide", fig.show='hide'}
+#This will help produce the bins and 95% confidence intervals for plotting using ggplot
+patients_temp <- patients_clean %>% 
+  mutate(mort30 = as.numeric(mort30)) %>%
+  select(CaseId, mort30, pPOSSUM_mort_risk, SRS_mort_risk, SORT_mort_risk) %>% 
+  drop_na() %>%
+  as.data.frame()
+
+clinical_temp <- clinical_only %>%
+  mutate(clinpred_lo = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.00,
+                            `1-2.5%` = 0.01,
+                            `2.6-5%` = 0.025,
+                            `5.1-10%` = 0.05,
+                            `10.1-50%` = 0.1,
+                            `>50%` = 0.5)) %>%
+  mutate(clinpred_mid = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.005,
+                            `1-2.5%` = 0.0175,
+                            `2.6-5%` = 0.0375,
+                            `5.1-10%` = 0.075,
+                            `10.1-50%` = 0.3,
+                            `>50%` = 0.75)) %>%
+  mutate(clinpred_hi = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.01,
+                            `1-2.5%` = 0.025,
+                            `2.6-5%` = 0.05,
+                            `5.1-10%` = 0.1,
+                            `10.1-50%` = 0.5,
+                            `>50%` = 1.0)) %>%
+  mutate(mort30 = as.numeric(mort30)) %>%
+  select(CaseId, mort30, clinpred_lo, clinpred_mid, clinpred_hi) %>%
+  drop_na() %>%
+  as.data.frame()
+
+cal_pPOSSUM <- PresenceAbsence::calibration.plot(DATA = patients_temp,
+                                                 which.model = 1,
+                                                 na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                                 main = "P-POSSUM",
+                                                 ylab = "Observed Mortality", 
+                                                 xlab = "Predicted Mortality") %>%
+  drop_na()
+
+cal_SRS <- PresenceAbsence::calibration.plot(DATA = patients_temp,
+                                             which.model = 2,
+                                             na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                             main = "SRS",
+                                             ylab = "Observed Mortality", 
+                                             xlab = "Predicted Mortality") %>%
+  drop_na()
+
+cal_SORT <- PresenceAbsence::calibration.plot(DATA = patients_temp,
+                                              which.model = 3,
+                                              na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                              main = "SORT",
+                                              ylab = "Observed Mortality", 
+                                              xlab = "Predicted Mortality") %>%
+  drop_na()
+
+cal_Clin <- PresenceAbsence::calibration.plot(DATA = clinical_temp,
+                                              which.model = 2, 
+                                              na.rm = TRUE, alpha = 0.05, N.bins = 15,
+                                              main = "Clinician Prediction",
+                                              ylab = "Observed Mortality", 
+                                              xlab = "Predicted Mortality")
+```
+
+```{r RiskPred_Fig6_2, echo=FALSE, warning=FALSE, message=FALSE, fig.width=8, fig.height=8, fig.cap="Figure 6-2: Calibration plots for SORT (A), P-POSSUM (B), SRS (C), and Receiver Operating Characteristic (ROC) curves for the three models (D). In the calibration plots (A-C), non-parametric smoothed best-fit curves (blue) are shown along with the point-estimates for predicted vs. observed mortality (black dots) and their 95% confidence intervals (black lines) within each decile of predicted mortality. External validation of all three models were performed on on the entire patient dataset."}
+
+cal_plot <- function(df, title) {
+
+  ggplot(df) +
+    geom_abline(slope = 1, intercept = 0, col = "grey") +
+    geom_point(aes(x = BinPred, y = BinObs)) +
+    geom_linerange(aes(x = BinPred, ymin = BinObsCIlower, ymax = BinObsCIupper)) +
+    geom_smooth(aes(x = BinPred, y = BinObs), method = "loess", se = FALSE, span = 1) +
+    #geom_text(aes(x = BinPred, y = -0.05, label = NBin)) +
+    xlim(0, 1) +
+    ylim(0, 1) + 
+    labs(title = title,
+         x = "Predicted mortality",
+         y = "Observed mortality") +
+    coord_fixed() +
+    theme_classic()
+
+}
+
+roc3_plot <- function(roc1, roc2, roc3, showAUC = TRUE, interval = 0.25, breaks = seq(0, 1, interval), title){
+  
+  require(pROC)
+  if(class(roc1) != "roc" | class(roc2) != "roc")
+    simpleError("Please provide roc object from pROC package")
+  plotx1 <- rev(roc1$specificities)
+  ploty1 <- rev(roc1$sensitivities)
+  plotx2 <- rev(roc2$specificities)
+  ploty2 <- rev(roc2$sensitivities)
+  plotx3 <- rev(roc3$specificities)
+  ploty3 <- rev(roc3$sensitivities)
+  
+  ggplot(NULL) +
+    geom_segment(aes(x = 0, y = 1, xend = 1,yend = 0), col = "grey") + 
+    geom_line(aes(x = plotx1, y = ploty1, col = "P-POSSUM"), size = 1) +
+    geom_line(aes(x = plotx2, y = ploty2, col = "SRS"), size = 1) +
+    geom_line(aes(x = plotx3, y = ploty3, col = "SORT"), size = 1) +
+    scale_x_reverse(name = "Specificity",
+                    limits = c(1,0), breaks = breaks, expand = c(0.001,0.001)) + 
+    scale_y_continuous(name = "Sensitivity", 
+                       limits = c(0,1), breaks = breaks, expand = c(0.001, 0.001)) +
+    labs(title = title) +
+    scale_colour_manual(name = "", values = c("P-POSSUM" = "#3366ff", "SRS" = "#e41a1c", "SORT" = "#4daf4a")) + 
+    theme_classic() + 
+    theme(axis.ticks = element_line(color = "grey80")) +
+    theme(legend.position = c(0.8, 0.2), 
+          legend.text = element_text(size = 8)) +
+    coord_fixed()
+  
+}
+
+roc4_plot <- function(roc1, roc2, roc3, roc4, showAUC = TRUE, interval = 0.25, breaks = seq(0, 1, interval), title){
+  
+  require(pROC)
+  if(class(roc1) != "roc" | class(roc2) != "roc")
+    simpleError("Please provide roc object from pROC package")
+  plotx1 <- rev(roc1$specificities)
+  ploty1 <- rev(roc1$sensitivities)
+  plotx2 <- rev(roc2$specificities)
+  ploty2 <- rev(roc2$sensitivities)
+  plotx3 <- rev(roc3$specificities)
+  ploty3 <- rev(roc3$sensitivities)
+  plotx4 <- rev(roc4$specificities)
+  ploty4 <- rev(roc4$sensitivities)
+  
+  ggplot(NULL) +
+    geom_segment(aes(x = 0, y = 1, xend = 1,yend = 0), col = "grey") +
+    geom_line(aes(x = plotx1, y = ploty1, col = "ASA-PS"), size = 1) +
+    geom_line(aes(x = plotx2, y = ploty2, col = "P-POSSUM"), size = 1) +
+    geom_line(aes(x = plotx3, y = ploty3, col = "SRS"), size = 1) +
+    geom_line(aes(x = plotx4, y = ploty4, col = "SORT"), size = 1) +
+    scale_x_reverse(name = "Specificity",
+                    limits = c(1,0), breaks = breaks, expand = c(0.001,0.001)) + 
+    scale_y_continuous(name = "Sensitivity", 
+                       limits = c(0,1), breaks = breaks, expand = c(0.001, 0.001)) +
+    labs(title = title) +
+    scale_colour_manual(name = "", values = c("ASA-PS" = "#d7191c", "P-POSSUM" = "#fdae61", "SRS" = "#abd9e9", "SORT" = "#2c7bb6")) + 
+    theme_classic() + 
+    theme(axis.ticks = element_line(color = "grey80")) +
+    theme(legend.position = c(0.8, 0.22), 
+          legend.text = element_text(size = 8)) +
+    coord_fixed()
+  
+}
+
+cowplot::plot_grid(cal_plot(cal_pPOSSUM, "P-POSSUM calibration"),
+          cal_plot(cal_SRS, "SRS calibration"),
+          cal_plot(cal_SORT, "SORT calibration"),
+          roc4_plot(ASA_roc, pPOSSUM_roc, SRS_roc, SORT_roc, title = "ROC curves"), 
+          labels = c("A", "B", "C", "D"))
+#ggsave("../output/figures/SNAP2_Clinician_Predictions_Fig2.pdf", width = 8, height = 8, units = "in", dpi = 600)
+```
+
+### Subjective clinical assessment
+
+There were `r sum(table(clinical_only$mort30)["TRUE"])` deaths (`r sum(table(clinical_only$mort30)["TRUE"])/nrow(clinical_only) * 100`%) within 30-days of surgery in the subset of `r nrow(clinical_only)` patients who had mortality estimates based on clinical judgement and/or ASA-PS grading alone. Subjective clinical assessment had a tendency to overpredict risk on calibration plot analysis (Figure 6-3A, Hosmer-Lemeshow test p = `r HLtemp = select(clinical_only, mort30, clin_pred) %>% drop_na(); generalhoslem::logitgof(obs = HLtemp$mort30, exp = HLtemp$clin_pred)$p.value`). Subjective clinical assessment also demonstrated good discrimination (Figure 6-3B and Table 6-3, AUROC = `r clinical_roc$auc`, 95% CI: `r ci(clinical_roc)[1]`&ndash;`r ci(clinical_roc)[3]`), which was not significantly different to SORT (95% CI for difference in AUROC: `r (ci(clinical_roc) - ci(SORT2_roc))[1]` to `r (ci(clinical_roc) - ci(SORT2_roc))[3]`, p = `r roc.test(clinical_roc, SORT2_roc)$p.value`). Continuous NRI analysis did not show improvement in classification when using SORT risk predictions compared to subjective clinical assessment (Table 6-3), i.e. the proportion of patients that were correctly reclassified (reclassified as higher risk and going on to die, or reclassified as lower risk and going on to survive) was not significantly different from the proportion incorrectly reclassified (reclassified as higher risk but going on to survive, or reclassified as lower risk but going on to die). 
+
+```{r RiskPred_Fig6_3, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8, fig.cap="Figure 6-3: Calibration plots and Receiver Operating Characteristic (ROC) curves for subjective Clinician Assessments (A, B) and the final chosen logistic regression model combining Clinician Assessments and component SORT variables (C, D), validated on the subset of patients in whom clinicians estimated risk based on clinical judgement alone (n = 12,802). For (A), a non-parametric smoothed best-fit curve (blue) is shown along with the point-estimates for predicted vs. observed mortality (black dots) and their 95% confidence intervals (black lines) within each range of clinician predicted mortality. For (C), the apparent (blue) and optimism-corrected (red) non-parametric smoothed calibration curves are shown, the latter was generated from 1,000 bootstrapped resamples of the dataset."}
+roc1_plot <- function(roc1, showAUC = TRUE, interval = 0.25, breaks = seq(0, 1, interval), title, leg){
+  
+  require(pROC)
+  if(class(roc1) != "roc")
+    simpleError("Please provide roc object from pROC package")
+  plotx1 <- rev(roc1$specificities)
+  ploty1 <- rev(roc1$sensitivities)
+  
+  ggplot(NULL) +
+    geom_segment(aes(x = 0, y = 1, xend = 1,yend = 0), col = "grey") + 
+    geom_line(aes(x = plotx1, y = ploty1, col = "#3366ff"), size = 1) +
+    scale_x_reverse(name = "Specificity",limits = c(1,0), breaks = breaks, expand = c(0.001, 0.001)) + 
+    scale_y_continuous(name = "Sensitivity", limits = c(0,1), breaks = breaks, expand = c(0.001, 0.001)) +
+    labs(title = title) +
+    scale_colour_manual(name = "", values = "#3366ff", labels = leg) + 
+    theme_classic() + 
+    theme(axis.ticks = element_line(color = "grey80")) +
+    theme(legend.position = c(0.8, 0.1), 
+          legend.text = element_text(size = 8)) +
+    coord_fixed()
+  
+}
+
+bootcal_plot <- function(df, title) {
+  
+  df <- data.frame(pred_mort = df[, "predy"], 
+                   apparent_mort = df[, "calibrated.orig"],
+                   corrected_mort = df[, "calibrated.corrected"])
+
+  ggplot(df) +
+    geom_abline(slope = 1, intercept = 0, col = "grey") +
+    geom_path(data = df, 
+              aes(x = pred_mort, y = apparent_mort, col = "Apparent"), 
+              size = 1, alpha = 0.8) +
+    geom_path(data = df, 
+              aes(x = pred_mort, y = corrected_mort, col = "Optimism-corrected"),
+              size = 1, alpha = 0.8) +
+    #geom_text(aes(x = BinPred, y = -0.05, label = NBin)) +
+    xlim(0, 1) +
+    ylim(0, 1) + 
+    labs(title = title,
+         x = "Predicted mortality",
+         y = "Observed mortality") +
+    scale_colour_manual(name = "", values = c("Apparent" = "#3366ff", "Optimism-corrected" = "#e41a1c")) + 
+    coord_fixed() +
+    theme_classic() +
+    theme(legend.position = c(0.8, 0.14), 
+          legend.text = element_text(size = 8))
+  
+}
+
+cowplot::plot_grid(cal_plot(cal_Clin, "Clinician prediction calibration"),
+          roc1_plot(clinical_roc, title = "Clinician prediction ROC curve", leg = "Clinician"), 
+          bootcal_plot(bootcal_SORT_clin3, "Combined model calibration"),
+          roc1_plot(combined_refitted_roc, title = "Combined model ROC curve", leg = "Combined"),
+          labels = c("A", "B", "C", "D"))
+#ggsave("../output/figures/SNAP2_Clinician_Predictions_Fig3.pdf", width = 8, height = 8, units = "in", dpi = 600)
+```
+
+```{r RiskPred_table6-3_prep, echo=FALSE, message=FALSE, warning=FALSE, results="hide", fig.show='hide'}
+#Create a test dataframe with prediction outputs and patient outcomes to assess NRI
+table3.df <- data.frame(mort30 = clinical_only$mort30,
+                        phat.clinical = clinical_only$clin_pred,
+                        phat.sort = clinical_only$SORT_mort_risk,
+                        phat.sort_clinical = predict(lrm_SORT_clin2, type = "fitted"),
+                        phat.sort_refitted = predict(logit_SORT_refit, type = "response", 
+                                                     newdata = clinical_only),
+                        phat.sort_clinical_refitted = predict(lrm_SORT_clin3, type = "fitted")) %>%
+  drop_na()
+
+table3 <- table3.df %>% summarise(Clinician = roc(response = mort30, predictor = phat.clinical)$auc,
+            SORT = roc(response = mort30, predictor = phat.sort)$auc,
+            Combined = (bootval_SORT_clin2["Dxy", "index.corrected"]/2 + 0.5),
+            `SORT-refitted` = roc(response = mort30, predictor = phat.sort_refitted)$auc,
+            `Combined-refitted` = roc(response = mort30, predictor = phat.sort_clinical_refitted)$auc,) %>%
+  gather(Model, AUROC, Clinician:`Combined-refitted`)
+table3$AUROC_CI <- c(paste0(ci(roc(response = table3.df$mort30, 
+                                   predictor = table3.df$phat.clinical))[1],
+                            " - ",
+                            ci(roc(response = table3.df$mort30, 
+                                   predictor = table3.df$phat.clinical))[3]),
+                     paste0(ci(roc(response = table3.df$mort30, 
+                                   predictor = table3.df$phat.sort))[1],
+                            " - ",
+                            ci(roc(response = table3.df$mort30, 
+                                   predictor = table3.df$phat.sort))[3]),
+                     paste0(ci(roc(response = table3.df$mort30, 
+                                   predictor = table3.df$phat.sort_clinical))[1],
+                            " - ",
+                            ci(roc(response = table3.df$mort30, 
+                                   predictor = table3.df$phat.sort_clinical))[3]),
+                     paste0(ci(roc(response = table3.df$mort30, 
+                                   predictor = table3.df$phat.sort_refitted))[1],
+                            " - ",
+                            ci(roc(response = table3.df$mort30, 
+                                   predictor = table3.df$phat.sort_refitted))[3]),
+                     paste0(ci(roc(response = table3.df$mort30, 
+                                   predictor = table3.df$phat.sort_clinical_refitted))[1],
+                            " - ",
+                            ci(roc(response = table3.df$mort30, 
+                                   predictor = table3.df$phat.sort_clinical_refitted))[3]))
+
+table3$AUROC_p <- c(NA,
+                    roc.test(roc(response = table3.df$mort30, predictor = table3.df$phat.clinical), 
+                             roc(response = table3.df$mort30, predictor = table3.df$phat.sort), method = "delong")$p.value,
+                    roc.test(roc(response = table3.df$mort30, predictor = table3.df$phat.clinical), 
+                             roc(response = table3.df$mort30, predictor = table3.df$phat.sort_clinical), method = "delong")$p.value,
+                    roc.test(roc(response = table3.df$mort30, predictor = table3.df$phat.clinical), 
+                             roc(response = table3.df$mort30, predictor = table3.df$phat.sort_refitted), method = "delong")$p.value,
+                    roc.test(roc(response = table3.df$mort30, predictor = table3.df$phat.clinical), 
+                             roc(response = table3.df$mort30, predictor = table3.df$phat.sort_clinical_refitted), method = "delong")$p.value)
+
+table3a <- data.frame(NRI = NA, NRI_CI = NA, NRI_p = NA)
+
+table3b <- rbind(reclassification2(data = table3.df, 
+                                   cOutcome = 1, 
+                                   predrisk1 = table3.df$phat.clinical, 
+                                   predrisk2 = table3.df$phat.sort, 
+                                   cutoff = c(0, 0.05, 1)),
+                 reclassification2(data = table3.df, 
+                                   cOutcome = 1, 
+                                   predrisk1 = table3.df$phat.clinical, 
+                                   predrisk2 = table3.df$phat.sort_clinical, 
+                                   cutoff = c(0, 0.05, 1)),
+                 reclassification2(data = table3.df, 
+                                   cOutcome = 1, 
+                                   predrisk1 = table3.df$phat.sort, 
+                                   predrisk2 = table3.df$phat.sort_refitted, 
+                                   cutoff = c(0, 0.05, 1)),
+                 reclassification2(data = table3.df, 
+                                   cOutcome = 1, 
+                                   predrisk1 = table3.df$phat.clinical, 
+                                   predrisk2 = table3.df$phat.sort_clinical_refitted, 
+                                   cutoff = c(0, 0.05, 1))) %>%
+  filter(Type == "Continuous") %>%
+  mutate(NRI_CI = paste0(NRI_CI_lower, " - ", NRI_CI_upper)) %>%
+  rename(NRI_p = p) %>%
+  select(NRI, NRI_CI, NRI_p)
+
+table3a <- rbind(table3a, table3b)
+
+table3 <- cbind(table3, table3a)
+
+#Removed Brier and R2 from the metrics of performance
+table3$Brier <- c(val.prob(p = table3.df$phat.clinical, y = table3.df$mort30)["Brier"],
+                  val.prob(p = table3.df$phat.sort, y = table3.df$mort30)["Brier"],
+                  bootval_SORT_clin2["B", "index.corrected"],
+                  val.prob(p = table3.df$phat.sort_refitted, y = table3.df$mort30)["Brier"],
+                  bootval_SORT_clin3["B", "index.corrected"]) 
+table3$R2 <- c(val.prob(p = table3.df$phat.clinical, y = table3.df$mort30)["R2"],
+               val.prob(p = table3.df$phat.sort, y = table3.df$mort30)["R2"],
+               bootval_SORT_clin2["R2", "index.corrected"],
+               val.prob(p = table3.df$phat.sort_refitted, y = table3.df$mort30)["R2"],
+               bootval_SORT_clin3["R2", "index.corrected"])
+```
+
+```{r RiskPred_table6-3, echo=FALSE, message=FALSE, warning=FALSE}
+colnames(table3) <- c("Model",
+                      "AUROC",
+                      "95% CI of AUROC",
+                      "p-value",
+                      "NRI",
+                      "95% CI of NRI",
+                      "p-value",
+                      "Brier score",
+                      "R-squared")
+pander(table3, 
+       caption = paste0("Table 6-3: Performance metrics for Clinician Assessment versus: 1) SORT risk prediction, 2) a logistic regression model combining Clinician Assessment and SORT prediction, 3) SORT risk prediction with coefficients refitted to the current dataset (SORT-refitted), and  4) a logistic regression model combining Clinician Assessment and refitted SORT coefficients (Combined-refitted). Performance metrics were computed based on the subset of patients in whom clinician judgement alone was used to estimate risk (n = ", 
+                        formatC(nrow(clinical_only), big.mark = ","),
+                        "). The reported AUROC for the combined models (Combined and Combined-refitted) are the optimism-corrected value from bootstrapped internal validation. The final chosen model was Combined-refitted based on its superior performance."))
+```
+
+### Combining subjective and objective risk assessment
+
+Bootstrapped internal validation yielded an optimism-corrected AUROC of `r bootval_SORT_clin2["Dxy", "index.corrected"]/2 + 0.5` for a combined model fitted using both subjective clinical assessment and SORT predictions as independent variables, which was better than subjective assessment alone (p = `r roc.test(clinical_roc, clinicalSORT_roc)$p.value`) and SORT alone (p = `r roc.test(SORT2_roc, clinicalSORT_roc)$p.value`)(Table 6-3). The model calibration was better than that of SORT or subjective clinical assessment alone, as assessed visually using the optimism-corrected calibration curve. The model also resulted in significantly improved reclassification compared to subjective clinical assessment alone in continuous NRI analysis (p = `r table3[3, "NRI_p"]`). 
+
+A refitted SORT model yielded an AUROC of `r SORT_refitted_roc$auc`, which was not significantly different to the original SORT model (p = `r roc.test(SORT_refitted_roc, SORT_roc)$p.value`) and exhibited similar calibration. The addition of subjective clinical assessment to this refitted SORT model showed that subjective assessment again improved predictions over using objective variables alone (Table 6-3). The final model chosen (Table 6-4, Combined-refitted) was the model with highest performance. The final model exhibited an Bootstrap optimism-corrected AUROC of `r bootval_SORT_clin3["Dxy", "index.corrected"]/2 + 0.5`, and was better than subjective assessment alone (p = `r roc.test(clinical_roc, combined_refitted_roc)$p.value`). The final model calibration was good, as assessed visually using the optimism-corrected calibration curve. Using continuous NRI analysis, the model also resulted in significantly improved reclassification compared to subjective clinical assessment alone (p = `r table3[5, "NRI_p"]`), and compared to the SORT alone with refitted coefficients (p = `r reclassification2(data = table3.df, cOutcome = 1, predrisk1 = table3.df$phat.clinical, predrisk2 = table3.df$phat.sort_clinical_refitted, cutoff = c(0, 0.05, 1))[2 ,"p"]`). 
+
+The effect of combining information from subjective clinical assessment and SORT can be demonstrated by computing the conditional probabilities of 30-day mortality using the final chosen model and plotting this against predicted mortalities using the refitted SORT model (Figure 6-4); full coefficients for the combined model are reported in Table 6-4.
+
+```{r RiskPred_Fig6_4, echo=FALSE, message=FALSE, warning=FALSE, fig.width=5, fig.height=5, fig.cap="Figure 6-4: Predicted risks from combined model, stratified by clinical assessments. The changes to risk predictions (y-axis) based on subjective clinical assessments (coloured lines) as SORT-predicted risks (x-axis) change was modelled, to illustrate the change in risk predictions if information from both are combined."}
+Fig6_4.df <-data.frame(mort30 = clinical_only$mort30,
+                       phat.clinical = clinical_only$clin_pred,
+                       phat.sort = clinical_only$SORT_mort_risk,
+                       phat.sort_clinical = predict(lrm_SORT_clin2, type = "fitted"),
+                       phat.sort_refitted = predict(logit_SORT_refit, type = "response", 
+                                                    newdata = clinical_only),
+                       phat.sort_clinical_refitted = predict(lrm_SORT_clin3, type = "fitted"),
+                       S03PerioperativeTeamOfTheRiskOfDeathWithin30Days = clinical_only$S03PerioperativeTeamOfTheRiskOfDeathWithin30Days) %>%
+  drop_na()
+
+ggplot(Fig6_4.df, aes(y = phat.sort_clinical_refitted, x = phat.sort_refitted, col = S03PerioperativeTeamOfTheRiskOfDeathWithin30Days)) + geom_point() +
+  coord_fixed(1) +
+  theme_classic() +
+  theme(legend.position="bottom",
+        legend.text = element_text(size = 8)) + 
+  scale_y_continuous(labels = scales::percent_format(), limits = c(0, 1)) +
+  scale_x_continuous(labels = scales::percent_format(), limits = c(0, 1)) +
+  labs(title = "Combined model risk predictions",
+       subtitle = "(Based on SORT and clinical assessments)",
+       x = "Refitted SORT risk-prediction",
+       y = "Combined-refitted model risk prediction",
+       colour = "Clinician prediction")
+#ggsave("../output/figures/SNAP2_Clinician_Predictions_Fig4.pdf", width = 6, height = 6, units = "in", dpi = 600)
+```
+
+
+```{r RiskPred_table6-4, echo=FALSE, message=FALSE, warning=FALSE}
+pander(lrm_SORT_clin3)
+```
+  Table: Table 6-4: Full coefficients for the risk prediction model combining subjective clinical assessment and objective risk tool information.
+
+### Sensitivity analyses
+
+Three sensitivity analyses were performed to assess the robustness of our findings. Table 6-5 shows patient characteristics of the sub-cohorts used for each of the sensitivity analyses.
+
+```{r RiskPred_Sensitivity_Tableone, echo=FALSE, message=FALSE, warning=FALSE}
+sensitivity_table <- function(.data) {
+  CreateTableOne(vars = c("S01Gender",
+                          "S01Age",
+                          "S02OperativeUrgency",
+                          "S03AsaPsClass",
+                          "S02PlannedProcSeverity",
+                          "specialty_recoded",
+                          "S03PastMedicalHistoryCoronaryArteryDisease",
+                          "S03PastMedicalHistoryCongestiveCardiacFailure",
+                          "S03PastMedicalHistoryMetastaticCancerCurrent",
+                          "S03PastMedicalHistoryDementia",
+                          "S03PastMedicalHistoryCOPD",
+                          "S03PastMedicalHistoryPulmonaryFibrosis",
+                          "S03Diabetes",
+                          "S03PastMedicalHistoryLiverCirrhosis",
+                          "S03PastMedicalHistoryRenalDisease",
+                          "S07PostopLOS",
+                          "SORT_mort_risk",
+                          "pPOSSUM_mort_risk",
+                          "SRS_mort_risk",
+                          "mort30"),
+                 data = .data)
+}
+
+#Subset a high risk group of those who only had clinical assessment of risks
+clinical_higher_risk <- clinical_only %>% 
+  filter(S01Age > 40) %>%
+  filter(S02PlannedProcedureMainGroup != "15" ) %>%
+  filter(S02PlannedProcedureSubGroup != "6-10") %>%
+  filter(Specialty == 1 |
+           S01Age >= 70 |
+           S03PastMedicalHistoryCoronaryArteryDisease == "Y" |
+           S03PastMedicalHistoryCongestiveCardiacFailure == "Y" |
+           S03PastMedicalHistoryStrokeTIA == "Y" |
+           S03Diabetes %in% c("1", "2I", "2O") |
+           S03PastMedicalHistoryRenalDisease == "Y" |
+           S03DrugTreatmentAntiAnginal == "Y" |
+           S03DrugTreatmentAntiHypertensive == "Y" |
+           S03ElevatedJugularVenousPressureJvp == "Y")
+
+#Subset a high risk group of all the patients
+patients_higher_risk <- patients_complete %>%
+  left_join(procedure_list, by = c("S02PlannedProcedure" = "Code")) %>%
+  mutate(Specialty = ifelse(Specialty %in% c("Bariatric", "Colorectal", "UpperGI", "HPB", "Thoracic", "Vascular"), 1, 0)) %>%
+  filter(S01Age > 40) %>%
+  filter(S02PlannedProcedureMainGroup != "15" ) %>%
+  filter(S02PlannedProcedureSubGroup != "6-10") %>%
+  filter(Specialty == 1 |
+           S01Age >= 70 |
+           S03PastMedicalHistoryCoronaryArteryDisease == "Y" |
+           S03PastMedicalHistoryCongestiveCardiacFailure == "Y" |
+           S03PastMedicalHistoryStrokeTIA == "Y" |
+           S03Diabetes %in% c("1", "2I", "2O") |
+           S03PastMedicalHistoryRenalDisease == "Y" |
+           S03DrugTreatmentAntiAnginal == "Y" |
+           S03DrugTreatmentAntiHypertensive == "Y" |
+           S03ElevatedJugularVenousPressureJvp == "Y")
+
+sensitivity_tab1a <- sensitivity_table(patients_complete)
+
+sensitivity_tab1b <- sensitivity_table(patients_higher_risk)
+
+sensitivity_tab1c <- sensitivity_table(clinical_plus_others)
+
+sensitivity_tab1d <- sensitivity_table(filter(patients_complete, country %in% c("UK")))
+
+sensitivity_tab1e <- sensitivity_table(filter(patients_complete, country %in% c("Aus", "NZ")))
+
+sensitivity_tab1 <- cbind(print(sensitivity_tab1a, nonnormal = skewed_var, 
+                                printToggle = FALSE), 
+                          print(sensitivity_tab1b, nonnormal = skewed_var, 
+                                printToggle = FALSE)) %>%
+  cbind(print(sensitivity_tab1c, nonnormal = skewed_var, 
+              printToggle = FALSE)) %>%
+  cbind(print(sensitivity_tab1d, nonnormal = skewed_var, 
+              printToggle = FALSE)) %>%
+  cbind(print(sensitivity_tab1e, nonnormal = skewed_var, 
+              printToggle = FALSE))
+
+colnames(sensitivity_tab1) <- c("Overall cohort", 
+                                "1: Restricted subgroup of higher risk patients", 
+                                "2: Subgroup of patients with clinical assessments made in conjunction with other tools",
+                                "3: UK cohort",
+                                "3: Aus/NZ cohort")
+
+  pander(sensitivity_tab1, "Table 6-5: Sensitivity analyses. Characteristics of the patient subgroups used in all sensitivity analyses. The restricted cohort used in the first sensitivity analysis was was older, had higher ASA-PS grades, higher proportions Xmajor or Complex surgery, higher incidences of comorbid disease and a higher mortality rate compared to the whole cohort of patients used in the main study analyses. The subgroup with clinical assessments made in conjunction with other tools was similar in characteristics to the whole cohort of patients used in the main analyses. The Australian and New Zealand cohort had a lower proportion of obstetric surgery (and consequently a higher proportion of males) and a higher proportion of minor/intermediate surgery, but a comparable percentage mortality.")
+```
+
+#### Sensitivity analysis 1: higher-risk patients
+
+```{r RiskPred_Sensitivity1_HighRisk, echo=FALSE, warning=FALSE, message=FALSE, results="hide", include=FALSE}
+#Validate the performance of SORT, PPOSSUM and SRS in the clinical_higher_risk group
+
+#Use the un-recalibrated SORT predictions
+val.prob(y = clinical_higher_risk$mort30, p = arm::invlogit(clinical_higher_risk$SORT_mort))
+
+#Use the un-recalibrated PPOSSUM predictions
+val.prob(y = clinical_higher_risk$mort30, p = arm::invlogit(clinical_higher_risk$pPOSSUM_mort))
+
+#Use the un-recalibrated SRS predictions
+val.prob(y = clinical_higher_risk$mort30, p = arm::invlogit(clinical_higher_risk$SRS_mort))
+
+#Validate the performance of SORT, PPOSSUM and SRS in the patients_higher_risk group
+
+#Use the un-recalibrated SORT predictions
+val.prob(y = patients_higher_risk$mort30, p = arm::invlogit(patients_higher_risk$SORT_mort))
+
+#Use the un-recalibrated PPOSSUM predictions
+val.prob(y = patients_higher_risk$mort30, 
+         p = arm::invlogit(patients_higher_risk$pPOSSUM_mort))
+
+#Use the un-recalibrated SRS predictions
+val.prob(y = patients_higher_risk$mort30, p = arm::invlogit(patients_higher_risk$SORT_mort))
+```
+
+Applying more restrictive inclusion criteria to identify patients deemed to be "high-risk" according to criteria used in previous studies [@wijeysundera_assessment_2018; @abbott_prospective_2018] evaluating prognostic markers yielded a sub-group of `r nrow(patients_higher_risk)` patients in whom the 30-day mortality rate was `r sum(patients_higher_risk$mort30)/nrow(patients_higher_risk) * 100`%. Calibrations of P-POSSUM, SRS and SORT predictions were similar to the full cohort (Figure 6-5). The Hosmer-Lemeshow chi-squared goodness-of-fit test showed a significant deviation from the line of unity for all three models (p-value for SORT = `r generalhoslem::logitgof(obs = patients_higher_risk$mort30, exp = arm::invlogit(patients_higher_risk$SORT_mort))$p.value`, P-POSSUM = `r generalhoslem::logitgof(obs = patients_higher_risk$mort30, exp = arm::invlogit(patients_higher_risk$pPOSSUM_mort))$p.value`, and SRS = `r generalhoslem::logitgof(obs = patients_higher_risk$mort30, exp = arm::invlogit(patients_higher_risk$SRS_mort))$p.value`).
+
+All risk prediction models exhibited poorer discrimination than in the main study analysis (Figure 6-5D), however the rank order of their discrimination performance was unchanged. SORT again performed the best in this sub-group with an AUROC of `r roc(response = patients_higher_risk$mort30, predictor = arm::invlogit(patients_higher_risk$SORT_mort))$auc` (95% confidence interval: `r ci(roc(response = patients_higher_risk$mort30, predictor = arm::invlogit(patients_higher_risk$SORT_mort)))[1]`&ndash;`r ci(roc(response = patients_higher_risk$mort30, predictor = arm::invlogit(patients_higher_risk$SORT_mort)))[3]`), followed by P-POSSUM (AUROC = `r roc(response = patients_higher_risk$mort30, predictor = arm::invlogit(patients_higher_risk$pPOSSUM_mort))$auc`, 95% CI: `r ci(roc(response = patients_higher_risk$mort30, predictor = arm::invlogit(patients_higher_risk$pPOSSUM_mort)))[1]`&ndash;`r ci(roc(response = patients_higher_risk$mort30, predictor = arm::invlogit(patients_higher_risk$pPOSSUM_mort)))[3]`), SRS (AUROC = `r roc(response = patients_higher_risk$mort30, predictor = arm::invlogit(patients_higher_risk$SRS_mort))$auc`, 95% CI: `r ci(roc(response = patients_higher_risk$mort30, predictor = arm::invlogit(patients_higher_risk$SRS_mort)))[1]`&ndash;`r ci(roc(response = patients_higher_risk$mort30, predictor = arm::invlogit(patients_higher_risk$SRS_mort)))[3]`), and ASA-PS (AUROC = `r roc(response = patients_higher_risk$mort30, predictor = factor(patients_higher_risk$S03AsaPsClass, levels = c("I", "II", "III", "Iv", "V"), ordered = TRUE))$auc`, 95% CI: `r ci(roc(response = patients_higher_risk$mort30, predictor = factor(patients_higher_risk$S03AsaPsClass, levels = c("I", "II", "III", "Iv", "V"), ordered = TRUE)))[1]`&ndash;`r ci(roc(response = patients_higher_risk$mort30, predictor = factor(patients_higher_risk$S03AsaPsClass, levels = c("I", "II", "III", "Iv", "V"), ordered = TRUE)))[3]`).
+
+```{r RiskPred_Fig6_5_prep, echo=FALSE, message=FALSE, warning=FALSE, results="hide", fig.show='hide'}
+patients_higher_temp <- patients_higher_risk %>% 
+  mutate(mort30 = as.numeric(mort30)) %>%
+  select(CaseId, mort30, pPOSSUM_mort_risk, SRS_mort_risk, SORT_mort_risk) %>% 
+  drop_na() %>%
+  as.data.frame()
+
+clinical_higher_temp <- clinical_higher_risk %>%
+  mutate(clinpred_lo = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.00,
+                            `1-2.5%` = 0.01,
+                            `2.6-5%` = 0.025,
+                            `5.1-10%` = 0.05,
+                            `10.1-50%` = 0.1,
+                            `>50%` = 0.5)) %>%
+  mutate(clinpred_mid = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.005,
+                            `1-2.5%` = 0.0175,
+                            `2.6-5%` = 0.0375,
+                            `5.1-10%` = 0.075,
+                            `10.1-50%` = 0.3,
+                            `>50%` = 0.75)) %>%
+  mutate(clinpred_hi = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.01,
+                            `1-2.5%` = 0.025,
+                            `2.6-5%` = 0.05,
+                            `5.1-10%` = 0.1,
+                            `10.1-50%` = 0.5,
+                            `>50%` = 1.0)) %>%
+  mutate(mort30 = as.numeric(mort30)) %>%
+  select(CaseId, mort30, clinpred_lo, clinpred_mid, clinpred_hi) %>%
+  drop_na() %>%
+  as.data.frame()
+
+senscal_pPOSSUM <- PresenceAbsence::calibration.plot(DATA = patients_higher_temp,
+                                                 which.model = 1,
+                                                 na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                                 main = "P-POSSUM",
+                                                 ylab = "Observed Mortality", 
+                                                 xlab = "Predicted Mortality") %>%
+  drop_na()
+
+senscal_SRS <- PresenceAbsence::calibration.plot(DATA = patients_higher_temp,
+                                             which.model = 2,
+                                             na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                             main = "SRS",
+                                             ylab = "Observed Mortality", 
+                                             xlab = "Predicted Mortality") %>%
+  drop_na()
+
+senscal_SORT <- PresenceAbsence::calibration.plot(DATA = patients_higher_temp,
+                                              which.model = 3,
+                                              na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                              main = "SORT",
+                                              ylab = "Observed Mortality", 
+                                              xlab = "Predicted Mortality") %>%
+  drop_na()
+
+senscal_Clin <- PresenceAbsence::calibration.plot(DATA = clinical_higher_temp,
+                                              which.model = 2, 
+                                              na.rm = TRUE, alpha = 0.05, N.bins = 15,
+                                              main = "Clinician Prediction",
+                                              ylab = "Observed Mortality", 
+                                              xlab = "Predicted Mortality") %>%
+  drop_na()
+```
+
+Subjective clinical assessment in this sub-group again demonstrated a tendency to overpredict risk on calibration plot analysis (Figure 6-5E, Hosmer-Lemeshow test p = `r generalhoslem::logitgof(obs = clinical_higher_temp$mort30, exp = clinical_higher_temp$clinpred_mid)$p.value`). The clinician mortality predictions also demonstrated good discrimination (Figure 6-5F, AUROC = `r roc(response = clinical_higher_risk$mort30, predictor = clinical_higher_risk$S03PerioperativeTeamOfTheRiskOfDeathWithin30Days)$auc`, 95% CI: `r ci(roc(response = clinical_higher_risk$mort30, predictor = clinical_higher_risk$S03PerioperativeTeamOfTheRiskOfDeathWithin30Days))[1]`&ndash;`r ci(roc(response = clinical_higher_risk$mort30, predictor = clinical_higher_risk$S03PerioperativeTeamOfTheRiskOfDeathWithin30Days))[3]`) in this sub-group. The subjective assessment discrimination in this sub-group was not significantly different to the main study analysis cohort (p = `r roc.test(roc(response = clinical_higher_risk$mort30, predictor = clinical_higher_risk$S03PerioperativeTeamOfTheRiskOfDeathWithin30Days), clinical_roc)$p.value`). 
+
+The findings of this sensitivity analysis suggest that performance of subjective clinical assessment and all the objective risk models is poorer in a higher risk cohort. However the relative performance of the models in comparison to each other, and in comparison with subjective clinical assessment, was consistent with the main results. 
+
+```{r RiskPred_Fig6_5, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=12, fig.cap="Figure 6-5: Calibration plots for SORT (A), P-POSSUM (B), SRS (C) and clinical assessments (E), and Receiver Operating Characteristic (ROC) curves for the three models (D) and clinical assessments (F), validated in the sensitivity analysis patient subset with restricted inclusion criteria (n = 12,987). The Areas Under the ROC curves (AUROCs) for P-POSSUM, SRS, SORT and clinical assessments were 0.863, 0.811, 0.876 and 0.824 in this subgroup, respectively"}
+cowplot::plot_grid(cal_plot(senscal_pPOSSUM, "P-POSSUM calibration"),
+          cal_plot(senscal_SRS, "SRS calibration"),
+          cal_plot(senscal_SORT, "SORT calibration"),
+          roc4_plot(roc(response = patients_higher_risk$mort30, 
+                        predictor = factor(patients_higher_risk$S03AsaPsClass, 
+                                  levels = c("I", "II", "III", "Iv", "V"), 
+                                  ordered = TRUE)),
+                    roc(response = patients_higher_risk$mort30, 
+                        predictor = arm::invlogit(patients_higher_risk$pPOSSUM_mort)), 
+                    roc(response = patients_higher_risk$mort30, 
+                        predictor = arm::invlogit(patients_higher_risk$SRS_mort)), 
+                    roc(response = patients_higher_risk$mort30, 
+                        predictor = arm::invlogit(patients_higher_risk$SORT_mort)), 
+                    title = "Risk model ROC curves"),
+          cal_plot(senscal_Clin, "Clinician prediction calibration"),
+          roc1_plot(roc(response = clinical_higher_risk$mort30,
+                        predictor = clinical_higher_risk$S03PerioperativeTeamOfTheRiskOfDeathWithin30Days),
+                    title = "Clinician prediction ROC curve", leg = "Clinician"),
+          labels = c("A", "B", "C", "D", "E", "F"),
+          nrow = 3,
+          ncol = 2)
+```
+
+#### Sensitivity analysis 2: predictions using both subjective and objective information
+
+The second sensitivity analysis used the sub-group whose mortality estimate was based on clinical judgement in conjunction with any objective risk tool (n = `r nrow(clinical_plus_others)`). The performance of subjective clinical assessment was assessed in the sub-group of patients who received subjective risk estimates informed by other sources in addition to clinical judgement. The AUROC for subjective clinical assessment in this subgroup was `r roc(response = clinical_plus_others$mort30, predictor = clinical_plus_others$S03PerioperativeTeamOfTheRiskOfDeathWithin30Days)$auc` (95% CI: `r ci(roc(response = clinical_plus_others$mort30, predictor = clinical_plus_others$S03PerioperativeTeamOfTheRiskOfDeathWithin30Days))[1]`&ndash;`r ci(roc(response = clinical_plus_others$mort30, predictor = clinical_plus_others$S03PerioperativeTeamOfTheRiskOfDeathWithin30Days))[3]`), which was not significantly different to the AUROC obtained for clinical assessments in the main study analysis (p = `r roc.test(clinical_roc, roc(response = clinical_plus_others$mort30, predictor = clinical_plus_others$S03PerioperativeTeamOfTheRiskOfDeathWithin30Days))$p.value`). The calibration of subjective clinical assessment in this sub-group was similar to that in the main cohort, again with a tendency to overpredict risk (Figure 6-6 for calibration plots).
+
+```{r RiskPred_Fig6_6_prep, echo=FALSE, message=FALSE, warning=FALSE, results="hide", fig.show='hide'}
+clinical_plus_temp <- clinical_plus_others %>%
+  mutate(clinpred_lo = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.00,
+                            `1-2.5%` = 0.01,
+                            `2.6-5%` = 0.025,
+                            `5.1-10%` = 0.05,
+                            `10.1-50%` = 0.1,
+                            `>50%` = 0.5)) %>%
+  mutate(clinpred_mid = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.005,
+                            `1-2.5%` = 0.0175,
+                            `2.6-5%` = 0.0375,
+                            `5.1-10%` = 0.075,
+                            `10.1-50%` = 0.3,
+                            `>50%` = 0.75)) %>%
+  mutate(clinpred_hi = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.01,
+                            `1-2.5%` = 0.025,
+                            `2.6-5%` = 0.05,
+                            `5.1-10%` = 0.1,
+                            `10.1-50%` = 0.5,
+                            `>50%` = 1.0)) %>%
+  mutate(mort30 = as.numeric(mort30)) %>%
+  select(CaseId, mort30, clinpred_lo, clinpred_mid, clinpred_hi) %>%
+  drop_na() %>%
+  as.data.frame()
+
+senscal_Clin_plus <- PresenceAbsence::calibration.plot(DATA = clinical_plus_temp,
+                                              which.model = 2, 
+                                              na.rm = TRUE, alpha = 0.05, N.bins = 15,
+                                              main = "Clinician Prediction",
+                                              ylab = "Observed Mortality", 
+                                              xlab = "Predicted Mortality") %>%
+  drop_na()
+```
+
+```{r RiskPred_Fig6_6, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4, fig.cap="Figure 6-6: Calibration plot (A) and Receiver Operating Characteristic (ROC) curve (B) for clinical assessments, validated in the sensitivity analysis patient subgroup where clinical assessments were made in conjunction with one or more other risk prediction tools. The Area Under the ROC curve (AUROC) for clinical assessments was 0.922 in this subgroup."}
+cowplot::plot_grid(cal_plot(senscal_Clin_plus, "Calibration"),
+          roc1_plot(roc(response = clinical_plus_others$mort30,
+                        predictor = clinical_plus_others$S03PerioperativeTeamOfTheRiskOfDeathWithin30Days),
+                    title = "ROC curve", leg = "Clinician"),
+          labels = c("A", "B"),
+          nrow = 1,
+          ncol = 2)
+```
+
+#### Sensitivity analysis 3: differences between countries
+
+```{r RiskPred_Sensitivity3_prep, echo=FALSE, message=FALSE, warning=FALSE, results="hide", fig.show='hide'}
+#Create subset of data for ANZ
+patients_ANZ_temp <- patients_complete %>% 
+  filter(country %in% c("Aus", "NZ")) %>%
+  mutate(mort30 = as.numeric(mort30)) %>%
+  select(CaseId, mort30, pPOSSUM_mort_risk, SRS_mort_risk, SORT_mort_risk, S03AsaPsClass) %>% 
+  drop_na() %>%
+  as.data.frame()
+
+#Create subset of data for UK
+patients_UK_temp <- patients_complete %>% 
+  filter(country %in% c("UK")) %>%
+  mutate(mort30 = as.numeric(mort30)) %>%
+  select(CaseId, mort30, pPOSSUM_mort_risk, SRS_mort_risk, SORT_mort_risk, S03AsaPsClass) %>% 
+  drop_na() %>%
+  as.data.frame()
+
+#Create subset of ANZ data with clinician judgement only
+clinical_ANZ_temp <- clinical_only %>%
+  filter(country %in% c("Aus", "NZ")) %>%
+  mutate(clinpred_lo = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.00,
+                            `1-2.5%` = 0.01,
+                            `2.6-5%` = 0.025,
+                            `5.1-10%` = 0.05,
+                            `10.1-50%` = 0.1,
+                            `>50%` = 0.5)) %>%
+  mutate(clinpred_mid = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.005,
+                            `1-2.5%` = 0.0175,
+                            `2.6-5%` = 0.0375,
+                            `5.1-10%` = 0.075,
+                            `10.1-50%` = 0.3,
+                            `>50%` = 0.75)) %>%
+  mutate(clinpred_hi = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.01,
+                            `1-2.5%` = 0.025,
+                            `2.6-5%` = 0.05,
+                            `5.1-10%` = 0.1,
+                            `10.1-50%` = 0.5,
+                            `>50%` = 1.0)) %>%
+  mutate(mort30 = as.numeric(mort30)) %>%
+  select(CaseId, mort30, clinpred_lo, clinpred_mid, clinpred_hi) %>%
+  drop_na() %>%
+  as.data.frame()
+
+#Create subset of UK data with clinician judgement only
+clinical_UK_temp <- clinical_only %>%
+  filter(country %in% c("UK")) %>%
+  mutate(clinpred_lo = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.00,
+                            `1-2.5%` = 0.01,
+                            `2.6-5%` = 0.025,
+                            `5.1-10%` = 0.05,
+                            `10.1-50%` = 0.1,
+                            `>50%` = 0.5)) %>%
+  mutate(clinpred_mid = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.005,
+                            `1-2.5%` = 0.0175,
+                            `2.6-5%` = 0.0375,
+                            `5.1-10%` = 0.075,
+                            `10.1-50%` = 0.3,
+                            `>50%` = 0.75)) %>%
+  mutate(clinpred_hi = recode(S03PerioperativeTeamOfTheRiskOfDeathWithin30Days, 
+                            `<1%` = 0.01,
+                            `1-2.5%` = 0.025,
+                            `2.6-5%` = 0.05,
+                            `5.1-10%` = 0.1,
+                            `10.1-50%` = 0.5,
+                            `>50%` = 1.0)) %>%
+  mutate(mort30 = as.numeric(mort30)) %>%
+  select(CaseId, mort30, clinpred_lo, clinpred_mid, clinpred_hi) %>%
+  drop_na() %>%
+  as.data.frame()
+
+#Create calibration plot objects for the ANZ data
+senscal_ANZ_pPOSSUM <- PresenceAbsence::calibration.plot(DATA = patients_ANZ_temp,
+                                                 which.model = 1,
+                                                 na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                                 main = "P-POSSUM",
+                                                 ylab = "Observed Mortality", 
+                                                 xlab = "Predicted Mortality") %>%
+  drop_na()
+
+senscal_ANZ_SRS <- PresenceAbsence::calibration.plot(DATA = patients_ANZ_temp,
+                                             which.model = 2,
+                                             na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                             main = "SRS",
+                                             ylab = "Observed Mortality", 
+                                             xlab = "Predicted Mortality") %>%
+  drop_na()
+
+senscal_ANZ_SORT <- PresenceAbsence::calibration.plot(DATA = patients_ANZ_temp,
+                                              which.model = 3,
+                                              na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                              main = "SORT",
+                                              ylab = "Observed Mortality", 
+                                              xlab = "Predicted Mortality") %>%
+  drop_na()
+
+senscal_ANZ_Clin <- PresenceAbsence::calibration.plot(DATA = clinical_ANZ_temp,
+                                              which.model = 2, 
+                                              na.rm = TRUE, alpha = 0.05, N.bins = 15,
+                                              main = "Clinician Prediction",
+                                              ylab = "Observed Mortality", 
+                                              xlab = "Predicted Mortality") %>%
+  drop_na()
+
+#Create calibration plot objects for the UK data
+senscal_UK_pPOSSUM <- PresenceAbsence::calibration.plot(DATA = patients_UK_temp,
+                                                 which.model = 1,
+                                                 na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                                 main = "P-POSSUM",
+                                                 ylab = "Observed Mortality", 
+                                                 xlab = "Predicted Mortality") %>%
+  drop_na()
+
+senscal_UK_SRS <- PresenceAbsence::calibration.plot(DATA = patients_UK_temp,
+                                             which.model = 2,
+                                             na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                             main = "SRS",
+                                             ylab = "Observed Mortality", 
+                                             xlab = "Predicted Mortality") %>%
+  drop_na()
+
+senscal_UK_SORT <- PresenceAbsence::calibration.plot(DATA = patients_UK_temp,
+                                              which.model = 3,
+                                              na.rm = TRUE, alpha = 0.05, N.bins = 10,
+                                              main = "SORT",
+                                              ylab = "Observed Mortality", 
+                                              xlab = "Predicted Mortality") %>%
+  drop_na()
+
+senscal_UK_Clin <- PresenceAbsence::calibration.plot(DATA = clinical_UK_temp,
+                                              which.model = 2, 
+                                              na.rm = TRUE, alpha = 0.05, N.bins = 15,
+                                              main = "Clinician Prediction",
+                                              ylab = "Observed Mortality", 
+                                              xlab = "Predicted Mortality") %>%
+  drop_na()
+
+#Create a table of AUROCs comparing UK to ANZ
+sensitivity_tab4 <- data.frame(ANZ = 
+                          c(roc(response = patients_ANZ_temp$mort30, predictor = factor(patients_ANZ_temp$S03AsaPsClass, levels = c("I", "II", "III", "Iv", "V"), ordered = TRUE))$auc,
+                            roc(response = patients_ANZ_temp$mort30, predictor = patients_ANZ_temp$pPOSSUM_mort)$auc, 
+                            roc(response = patients_ANZ_temp$mort30, predictor = patients_ANZ_temp$SRS_mort)$auc, 
+                            roc(response = patients_ANZ_temp$mort30, predictor = patients_ANZ_temp$SORT_mort)$auc,
+                            roc(response = clinical_ANZ_temp$mort30, predictor = clinical_ANZ_temp$clinpred_mid)$auc),
+                          UK = c(roc(response = patients_UK_temp$mort30, predictor = factor(patients_UK_temp$S03AsaPsClass, levels = c("I", "II", "III", "Iv", "V"), ordered = TRUE))$auc, 
+                            roc(response = patients_UK_temp$mort30, predictor = patients_UK_temp$pPOSSUM_mort)$auc, 
+                            roc(response = patients_UK_temp$mort30, predictor = patients_UK_temp$SRS_mort)$auc, 
+                            roc(response = patients_UK_temp$mort30, predictor = patients_UK_temp$SORT_mort)$auc,
+                            roc(response = clinical_UK_temp$mort30, predictor = clinical_UK_temp$clinpred_mid)$auc),
+                          p_value = 
+                            c(roc.test(roc(response = patients_ANZ_temp$mort30, 
+                                           predictor = factor(patients_ANZ_temp$S03AsaPsClass, 
+                                                              levels = c("I", "II", "III", "Iv", "V"), ordered = TRUE)),
+                                       roc(response = patients_UK_temp$mort30, 
+                                           predictor = factor(patients_UK_temp$S03AsaPsClass, 
+                                                              levels = c("I", "II", "III", "Iv", "V"), ordered = TRUE)))$p.value,
+                              roc.test(roc(response = patients_ANZ_temp$mort30, predictor = patients_ANZ_temp$pPOSSUM_mort),
+                                       roc(response = patients_UK_temp$mort30, predictor = patients_UK_temp$pPOSSUM_mort))$p.value,
+                              roc.test(roc(response = patients_ANZ_temp$mort30, predictor = patients_ANZ_temp$SRS_mort),
+                                       roc(response = patients_UK_temp$mort30, predictor = patients_UK_temp$SRS_mort))$p.value,
+                              roc.test(roc(response = patients_ANZ_temp$mort30, predictor = patients_ANZ_temp$SORT_mort),
+                                       roc(response = patients_UK_temp$mort30, predictor = patients_UK_temp$SORT_mort))$p.value,
+                              roc.test(roc(response = clinical_ANZ_temp$mort30, predictor = clinical_ANZ_temp$clinpred_mid),
+                                       roc(response = clinical_UK_temp$mort30, predictor = clinical_UK_temp$clinpred_mid))$p.value))
+rownames(sensitivity_tab4) <- c("ASA-PS", "P-POSSUM", "SRS", "SORT", "Clinical")
+colnames(sensitivity_tab4) <- c("Australia/New Zealand",
+                                "UK",
+                                "p-value")
+```
+
+In the third sensitivity analysis, differences in performance of subjective clinical assessment and objective risk prediction tools between the UK and the Australasian cohorts were investigated. The 30-day mortality in the Australasian cohort (`r sum(filter(patients_complete, country %in% c("Aus", "NZ"))$mort30)/nrow(filter(patients_complete, country %in% c("Aus", "NZ"))) * 100`%) was comparable to that of the UK (`r sum(filter(patients_complete, country %in% c("UK"))$mort30)/nrow(filter(patients_complete, country %in% c("UK"))) * 100`%, p = `r prop.test(table(patients_complete$mort30, (patients_complete$country == "UK")))$p.value`). Visual inspection of calibration plots revealed the calibration of SORT to be worse in Australasia than the UK (Figure 6-7E and 6-7F). The AUROCs (Table 6-6) for the objective risk tools in the Australasian subset (P-POSSUM: `r sensitivity_tab4["P-POSSUM", "Australia/New Zealand"]`, SRS: `r sensitivity_tab4["SRS", "Australia/New Zealand"]`, and SORT: `r sensitivity_tab4["SORT", "Australia/New Zealand"]`) were not significantly different to the AUROCs in the UK subset (P-POSSUM: `r sensitivity_tab4["P-POSSUM", "UK"]`, SRS: `r sensitivity_tab4["SRS", "UK"]`, and SORT: `r sensitivity_tab4["SORT", "UK"]`, p >0·05 for all risk tools). The calibration of subjective clinical assessment was comparable in the two geographical sub-groups (Figure 6-8) and there were also no significant differences in AUROCs (Australasia: `r sensitivity_tab4["Clinical", "Australia/New Zealand"]`, UK: `r sensitivity_tab4["Clinical", "UK"]`, p = `r sensitivity_tab4["Clinical", "p-value"]`).
+
+```{r RiskPred_Fig6_7, echo=FALSE, message=FALSE, warning=FALSE, fig.width=7, fig.height=14, fig.cap="Figure 6-7: Calibration plots (A-F) and Receiver Operating Characteristic (ROC) curves (G-H) for the objective risk prediction tools in the Australasian and UK cohorts."}
+cowplot::plot_grid(cal_plot(senscal_ANZ_pPOSSUM, "P-POSSUM calibration (Aus/NZ)"),
+          cal_plot(senscal_UK_pPOSSUM, "P-POSSUM calibration (UK)"),
+          cal_plot(senscal_ANZ_SRS, "SRS calibration (Aus/NZ)"),
+          cal_plot(senscal_UK_SRS, "SRS calibration (UK)"),
+          cal_plot(senscal_ANZ_SORT, "SORT calibration (Aus/NZ)"),
+          cal_plot(senscal_UK_SORT, "SORT calibration (UK)"),
+          roc4_plot(roc(response = patients_ANZ_temp$mort30, 
+                        predictor = factor(patients_ANZ_temp$S03AsaPsClass, 
+                                  levels = c("I", "II", "III", "Iv", "V"), 
+                                  ordered = TRUE)),
+                    roc(response = patients_ANZ_temp$mort30, 
+                        predictor = arm::invlogit(patients_ANZ_temp$pPOSSUM_mort)), 
+                    roc(response = patients_ANZ_temp$mort30, 
+                        predictor = arm::invlogit(patients_ANZ_temp$SRS_mort)), 
+                    roc(response = patients_ANZ_temp$mort30, 
+                        predictor = arm::invlogit(patients_ANZ_temp$SORT_mort)), 
+                    title = "Risk model ROC curves (Aus/NZ)"),
+          roc4_plot(roc(response = patients_UK_temp$mort30, 
+                        predictor = factor(patients_UK_temp$S03AsaPsClass, 
+                                  levels = c("I", "II", "III", "Iv", "V"), 
+                                  ordered = TRUE)),
+                    roc(response = patients_UK_temp$mort30, 
+                        predictor = arm::invlogit(patients_UK_temp$pPOSSUM_mort)), 
+                    roc(response = patients_UK_temp$mort30, 
+                        predictor = arm::invlogit(patients_UK_temp$SRS_mort)), 
+                    roc(response = patients_UK_temp$mort30, 
+                        predictor = arm::invlogit(patients_UK_temp$SORT_mort)), 
+                    title = "Risk model ROC curves (UK)"),
+          labels = c("A", "B", "C", "D", "E", "F", "G", "H"),
+          nrow = 4,
+          ncol = 2)
+```
+
+```{r RiskPred_Fig6_8, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8, fig.cap="Figure 6-8: Calibration plots (A-B) and Receiver Operating Characteristic (ROC) curves (C-D) for clinical assessments in the Australasian and UK cohorts."}
+cowplot::plot_grid(cal_plot(senscal_ANZ_Clin, "Clinical calibration (Aus/NZ)"),
+          cal_plot(senscal_UK_Clin, "Clinical calibration (UK)"),
+          roc1_plot(roc(response = clinical_ANZ_temp$mort30,
+                        predictor = clinical_ANZ_temp$clinpred_mid),
+                    title = "Clinical ROC curve (Aus/NZ)", leg = "Clinician"),
+          roc1_plot(roc(response = clinical_UK_temp$mort30,
+                        predictor = clinical_UK_temp$clinpred_mid),
+                    title = "Clinical ROC curve (UK)", leg = "Clinician"),
+          labels = c("A", "B", "C", "D"),
+          nrow = 2,
+          ncol = 2)
+```
+
+```{r RiskPred_table6-6, echo=FALSE, message=FALSE, warning=FALSE}
+pander(sensitivity_tab4, caption = "Table 6-6: AUROCs of the objective risk tools and subjective clinical assessment, compared between the UK and Australian/New Zealand data subsets. There was no significant difference in discrimination using any of the risk prediction tools or using subjective assessement when comparing their performance in the UK and Australian/New Zealand datasets.")
+```
+
+## Discussion
+
+### Principal findings
+
+In this chapter, three key findings are reported: First, despite a plethora of options for risk assessment, in over 80% of patients, subjective clinical assessment alone was used to predict 30-day mortality risk; Second, in cases where objective prediction tools were applied, the P-POSSUM or its variants were most commonly used, but were outperformed by the simpler and more recently developed SORT; Finally, the combination of subjective clinical assessment with the objective SORT resulted in a small but significant improvement in predictions over either alone.
+
+Improved accuracy of risk prediction through the combination of subjective and objective information provides better information to the patient and therefore enhances the shared decision-making process. Beyond that, there are also important ramifications in the correct allocation of resources for high-risk patients, in particular, finite resources such as postoperative critical care beds. In this chapter, the combined model presented showed significantly better NRI performance, which can be largely attributed to the correct downgrading of patient risks &mdash; a large proportion of patients were correctly reclassified as lower risk using the combined model compared to subjective clinical assessment alone. Therefore, using an approach combining both subjective and objective risk assessment may result in fewer patients inappropriately admitted to critical care postoperatively. This is particularly important given the impact that postoperative critical care requirement can have on patients (increased risk of last-minute cancellation if no bed available) [@wong_cancelled_2018], and on healthcare providers (contributing to systems pressure due to competition for beds between surgical and emergency patients).
+
+### Study limitations
+
+I recognise there are a number of limitations to this study. First, models predicting rare events may appear optimistically accurate, as a model that identifies every patient as being low risk of mortality, in a group where the probability of death approaches 0%, would almost always appear to be correct. For this reason, I undertook the first sensitivity analysis, which evaluated the performance of the various risk assessment methods in a sub-group of patients which have been defined as high-risk in previous studies of prognostic indicators [@wijeysundera_measurement_2016; @abbott_prospective_2018]. This demonstrated that while 30-day mortality was higher and prognostic accuracy lower, the performance of the SORT and subjective clinical assessment were still good, and compared favourably with previous evaluations of more complex risk assessment methods such as functional capacity evaluation, or models including cardiac biomarkers which are not routinely available in clinical practice [@wijeysundera_measurement_2016; @abbott_prospective_2018]. Second, while it can be assumed that subjective clinical assessments were truly clinically-based judgements, because this was a pragmatic unblinded study, it was possible that unrecorded information from other sources may have subconsciously influenced these clinical assessments. For this reason, I undertook the second sensitivity analysis which refuted this possible risk. Third, due to low case numbers, one is unable to evaluate the accuracy of a variety of clinical risk prediction methods such as frailty assessment or cardiopulmonary exercise testing. However, this was not an objective of the analyses in this chapter; further, the lack of "real-world" clinical uptake of these types of measures is in itself an important finding, particularly given the substantial interest in such measures (some of which carry considerable cost) in the research literature. Finally, the cohort of patients recruited from the UK was substantially larger than the Australasian cohort. For this reason, the third sensitivity analysis was performed, which found no significant differences in mortality or predictive accuracy of the various risk assessment methods between the two geographical groups. Therefore, I anticipate the findings reported in this chapter to be generalisable to these different health systems, and propose that the model developed using a combination of subjective and objective clinical assessment should be tested in other similar (high-income) settings.
+
+### Clinical implications and relation to existing literature
+
+From surveying the literature, this is the first study comparing subjective clinical assessment against objective risk assessment for predicting perioperative mortality risk in a large multicentre international cohort. Research in this field is usually limited by recruitment bias, due to the predominant participation of research active centres, and the need for patient consent. For example, recent perioperative studies evaluating the accuracy of different prognostic methods include METS [@wijeysundera_measurement_2016] and VISION [@abbott_prospective_2018] with 27% and 68% screening to recruitment rates respectively. 
+
+One way of overcoming such biases would be to study the accuracy of prognostic models using routinely collected or administrative data; however, this provides no opportunity to evaluate the accuracy of subjective clinical assessments in multiple centres. The analyses in this chapter avoided these issues through prospective data collection in an unselected cohort with an ethical waiver for patient consent. The mortality in this cohort closely matches that recorded in UK administrative data of patients undergoing major or complex (and therefore usually inpatient) surgery [@abbott_frequency_2017], therefore supporting the assertion that this cohort was representative of the "real-world" perioperative population. I have therefore presented generalisable information regarding the accuracy of risk assessment, which can be applied to clinical practice in the UK, Australia and New Zealand, and potentially further afield. 
+
+The METS study [@wijeysundera_measurement_2016] in particular suffered from at least two further issues beyond recruitment bias, which may also have contributed to differences between their findings and those reported in this thesis. First, in their analysis the METS authors conflated clinical assessment of functional capacity with clinical assessment of mortality risk, these items are not directly analagous. There will be some patients who have poor functional capacity but high mortality risk and some with high functional capacity with low mortality risk, and thus errors in predicting functional capacity would be amplified when assessing the performance of predictions against actual mortality. Second, clinicians may be poor at judging functional capacity, but may still be good at judging mortality risk. In their study the clinicians were unable to clearly distinguish between patients with low and high estimated peak oxygen consumptions, this is different from distinguishing between patients with low and high likelihoods of dying. 
+
+Notably a large proportion of clinicians rely on clinical judgement alone when estimating risk in their patients. Despite the growing literature on CPET/functional capacity and the growing interest in perioperative CPET [@reeves_cardiopulmonary_2018], it can be seen from these results that CPET was rarely used to estimate perioperative risk in practice. The use of objective risk tools in conjunction with clinical assessment is also cheaper, and more immediately accessible to patients and clinicians, due to the increasing ubiquity of mobile computing devices. The value of functional capacity assessment might therefore be limited to selecting patients who might benefit from specific "prehabilitation" interventions related to increasing preoperative exercise capacity [@west_effect_2015; @richardson_fit_2017].
+
+I propose that subjective clinical assessment adds to the value of objective risk tools, by accounting for a variety of unmeasured confounders which are known to clinicians. These may include general health (e.g. unusual comorbidities, frailty, social deprivation, patient motivation and engagement) and surgical characteristics (e.g. anticipated anatomical/technical difficulties) which risk tools would not usually capture.
+
+Currently, subjective clinical assessment is almost never incorporated into risk prediction tools for surgery. One exception is the American College of Surgeons National Surgical Quality Improvement Program (ACS NSQIP) Surgical Risk Calculator [@american_college_of_surgeons_acs_2018; @bilimoria_development_2013; @mitka_data-based_2009]. In this calculator, baseline risk variable data and details of the surgical procedure are first entered onto an online form, and probabilities of a several outcomes including mortality and major complications are provided on a second screen. The clinician is then able to adjust the risk upwards if they felt the calculated risks were an underestimate. Perhaps an improved approach would be to enter clinical assessment as an additional variable at the same time as objective variables, such that a clinician’s subjective impressions of their patient’s risk is unbiased to the risk estimate presented by the calculator. Future development of the online SORT calculator could adopt this approach to provide increased accuracy in predictions [@ncepod_surgical_2015; @noauthor_ncepod_2016].
+
+As discussed at the start of this chapter, one of the aims of developing risk models is to direct clinical decision-making and target resources, with the intent to reduce mortality. Therefore, over time, models tend to underestimate risk for future populations, and require recalibration. It is thus unsurprising that the external model validations performed in this study detected miscalibration, particularly the older models (P-POSSUM was developed in mid-1990s and SRS in the early-2000s). Future work in this area will therefore necessitate recalibration of the combined model presented in this chapter.
+
+### Summary
+
+In this chapter, the performance of ASA-PS grading, P-POSSUM, SORT and SRS were evaluated in the SNAP-2: EPICCS dataset, and compared against the performance of subjective clinical assessment. Although subjective clinical assessment and all four objective risk prediction tools studied showed tendency to overpredict risk, their discrimination was comparable. 
+
+The combination of subjective and objective risk assessment could provide more accurate risk predictions than subjective clinical assessment alone. Implementation of a modified SORT model which incorporates clinical assessment should lead to improved clinical decision-making (including improved provision of information to patients contemplating surgery), and better use of limited clinical resources such as postoperative critical care for patients who are most likely to benefit. 
+
+##### PAGE BREAK

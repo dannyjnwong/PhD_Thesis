@@ -1,0 +1,241 @@
+---
+title: 'Critical Care Provision After Surgery'
+author: "Danny Wong"
+date: "14 November 2017"
+bibliography: ../references/bib/SNAP2.bib
+csl: ../references/bib/vancouver.csl
+link-citations: yes
+output:
+  word_document:
+    reference_docx: styles.docx
+---
+
+```{r index_setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Declaration
+
+I, Danny Jon Nian Wong, confirm that the work presented in this thesis is my own. Where work has been derived from other sources, I confirm that this has been indicated in the thesis (below).
+
+- **Chapter 1** &mdash; Nil.
+- **Chapter 2&ndash;4** &mdash; Study conception of the Second Sprint National Anaesthesia Project: EPIdemiology of Critical Care provision after Surgery (SNAP-2): S. Ramani Moonesinghe; Development of the protocols and study documents: SNAP-2 project team at the Royal College of Anaesthetists, including Steve K. Harris, Laura Farmer, Jose Lourtie and James Goodwin. Feedback on and oversight of SNAP-2 all study-related documents was provided by the study steering group, comprising Michael P. Grocott, Robert Sneyd, Sharon Drake, Stephen Brett, Anna Batchelor, Catherine Plowright, Suman Shrestha, Richard Shawyer, Shafi Ahmed, Mizan Khondoker and Mike Nathanson; The power analysis informing the sample size considerations for the patient cohort study was performed by Mizan Khondoker; Electronic database and web development for the patient cohort study: Net Solving Limited.
+- **Chapter 5&ndash;7** &mdash; Collection of source data and data entry for the SNAP-2 organisational survey and patient cohort study: site investigators and collaborators at all participating hospitals.
+
+##### PAGE BREAK
+
+# Abstract
+
+Although intended for benefit, surgery exposes patients to potential complications. Critical care is thought to protect against the development of these complications, and is recommended for patients at higher risk. However, previous literature suggests that high-risk patients do not consistently receive postoperative critical care.
+
+In this PhD thesis, I investigate the supposed misallocation of critical care resources, and seek to answer the following research questions: 1. What is the availability of postoperative critical care? 2. How do clinicians estimate perioperative risk? 3. How accurate are current available risk prediction tools? 4. How do clinicians decide which patients to admit for postoperative critical care? 5. What factors influence their admission?
+
+A survey of postoperative critical care availability was conducted in 309 hospitals across the United Kingdom, Australia and New Zealand (NZ). Then, in a subset of 274 of these hospitals, a cohort study enrolling 26,502 patients undergoing inpatient surgery was undertaken.
+
+Postoperative critical care availability was found to differ between countries. UK hospitals reported fewer critical care beds per 100 hospital beds (median = 2.7) compared with Australia (median = 3.7) and NZ (median = 3.5). Enhanced care/high-acuity beds used to manage some high-risk patients were identified in around 31% of hospitals. The estimated numbers of critical care beds per 100,000 population were 9.3, 14.1, and 9.1 in the UK, Australia, and NZ, respectively. The estimated per capita high-acuity bed capacities per 100,000 population were 1.2, 3.8, and 6.4 in the UK, Australia, and NZ, respectively. 
+The risk profile of inpatients undergoing inpatient surgery and the incidence of short-term mortality and morbidity outcomes were described. Less than 40% of predicted high-risk patients (defined as having a 5% or higher predicted 30-day mortality) in the cohort were admitted to critical care directly after surgery, regardless of risk model used.
+
+Compared with objective risk tools, subjective clinical assessment performed similarly in terms of discrimination, but consistently overpredicted risk. The Area Under the Receiver Operating Characteristic curve (AUROC) for subjective clinical assessment was 0.89, compared to 0.91 for the Surgical Outcome Risk Tool (SORT), the best-performing objective risk tool. However, combining information from both objective tools and subjective assessment improved the accuracy and clinical applicability of risk predictions (combined model AUROC = 0.93; continuous Net Reclassification Index [NRI] = 0.347, p <0.001). 
+
+Associations were identified between patient risk factors (e.g. increased comorbidities, more complex surgery, higher surgical urgency) and the likelihood of being recommended postoperative critical care admission. Increased critical care bed availability had a small but significant association with critical care recommendation (adjusted odds ratio [OR] = 1.05 per empty critical care bed at the time of surgery), suggesting a subtle effect of exogenous influences on clinical decision-making.
+
+These results will have value in informing policy around the delivery of postoperative care for high-risk patients undergoing surgery, both at a macroscopic level in planning services, and at a microscopic level in making clinical decisions for individual patients.
+
+##### PAGE BREAK
+
+# Impact Statement
+
+The work presented in this thesis has achieved impact from the perspectives of academia, healthcare policy and clinical practice, as described below. 
+
+In terms of academia, this work has widened the research participation of practicing clinicians in almost all UK NHS hospitals, and a large number of public hospitals in Australia and New Zealand. Over 2,900 frontline clinical collaborators were involved, mobilising a strong network of research-interested clinicians who will continue contributing to research in the future. This collaboration spanned over 300 hospitals across the UK and Australasia, thus the results of this work will likely be widely disseminated and received with interest. Furthermore, the research infrastructure to conduct multicentre observational anaesthesia and perioperative medicine studies has been strengthened in Australia and New Zealand where this was previously underdeveloped. The success of this collaborative approach to sourcing data has led to the Royal College of Anaesthetists funding and commissioning a third Sprint National Anaesthesia Project, which will examine a new research topic proposed by the college's members. 
+
+On a healthcare policy level, findings from the organisational survey (reported in *Chapter 3*) provide updated national estimates of the capacity to provide critical care for postoperative patients, and describes other hospital areas where high-risk patients are being looked after following their surgery. Published work on surgical cancellations using data from the patient cohort have been widely publicised by news media, highlighting the importance of sufficient critical care provision in the perioperative period to the general public. These results have been published and are being used to inform national guidance around the regulation of enhanced care and high-acuity hospital beds that care for patients who might be too unwell to occupy general ward-level beds, but do not necessarily require admission into intensive care or high-dependency units. The Faculty of Intensive Care Medicine and the Royal College of Physicians of London are currently finalising guidance on service development and delivery of enhanced care which has referenced the work delivered in this PhD. 
+
+From the perspective of the clinician making clinical decisions about individual patients, the work presented in *Chapters 4* to *7* firstly provides insight about the disparity between resource need and allocation; secondly, highlights ways in which better risk assessment can be conducted in order to identify patients who might benefit from critical care admission following surgery; and thirdly alerts clinicians to the possible unconscious biases which might influence their decision-making about critical care referral beyond patient risk factors. The clinical implications of the results from this thesis are that better allocation of scarce critical care resources might be achieved if clinicians undertake explicit risk assessment to identify the patients who are appropriate for critical care, and that augmenting subjective judgment with objective risk assessment tools would increase the accuracy of these risk assessments. It is anticipated that as computer-aided clinical decision aids become more ubiquitous, complementing objective prediction models with clinicians' holistic assessments of their patients' conditions will achieve better overall outcomes than relying on either alone. 
+
+##### PAGE BREAK
+
+# List of Tables
+
+##### PAGE BREAK
+
+# List of Figures
+
+##### PAGE BREAK
+
+# List of Abbreviations
+
+**ACS** &mdash; American College of Surgeons
+
+**AIC** &mdash; Akaike’s Information Criterion
+
+**ANZCA** &mdash; Australian and New Zealand College of Anaesthetists
+
+**ANZCA CTN** &mdash; Australian and New Zealand College of Anaesthetists Clinical Trials Network
+
+**ANZICS** &mdash; Australia and New Zealand Intensive Care Society
+
+**ASA** &mdash; American Society of Anesthesiologists; In some parts of the text, ASA is also used as the abbreviation for the Australian Society of Anaesthetists.
+
+**ASA-PS** &mdash; American Society of Anesthesiologists Physical Status
+
+**AUROC** &mdash; Area Under the Receiver Operating Characteristic curve
+
+**CAG** &mdash; Confidentiality Advisory Group of the Health Research Authority
+
+**CCOT** &mdash; Critical Care Outreach Team
+
+**CHI** &mdash; Community Health Index
+
+**COPD** &mdash; Chronic Obstructive Pulmonary Disease
+
+**CPET** &mdash; Cardiopulmonary Exercise Testing
+
+**CRF** &mdash; Case Record Form
+
+**CT** &mdash; Computed Tomography
+
+**DASI** &mdash; Duke Activity Status Index
+
+**ECG** &mdash; Electrocardiogram
+
+**ED** &mdash; Emergency Department
+
+**EPICCS** &mdash; EPIdemiology of Critical Care provision after Surgery
+
+**ERAS** &mdash; Enhanced Recovery After Surgery
+
+**ESICM** &mdash; European Society of Intensive Care Medicine
+
+**EuSOS** &mdash; European Surgical Outcomes Study
+
+**FICM** &mdash; The Faculty of Intensive Care Medicine
+
+**GCS** &mdash; Glasgow Coma Score
+
+**GI** &mdash; Gastrointestinal
+
+**GIRFT** &mdash; Getting It Right First Time Programme
+
+**GPAS** &mdash; Guidance for the Provision of Anaesthesia Services
+
+**GPICS** &mdash; Guidelines for the Provision of Intensive Care Services
+
+**HDU** &mdash; High Dependency Unit
+
+**HES** &mdash; Hospital Episode Statistics
+
+**HSC** &mdash; Health and Social Care
+
+**HSRC** &mdash; Health Services Research Centre
+
+**HRA** &mdash; Health Research Authority
+
+**ICNARC** &mdash; The UK Intensive Care National Audit & Research Centre 
+
+**ICS** &mdash; The UK Intensive Care Society
+
+**ICU** &mdash; Intensive Care Unit
+
+**IQR** &mdash; Interquartile Range
+
+**IRAS** &mdash; Integrated Research Application System
+
+**ISOS** &mdash; International Surgical Outcomes Study
+
+**LOS** &mdash; Length of Stay
+
+**METS** &mdash; Metabolic Equivalents of Tasks 
+
+**MOR** &mdash; Median Odds Ratio
+
+**MRI** &mdash; Magnetic Resonance Imaging
+
+**NCEPOD** &mdash; The National Confidential Enquiry into Patient Outcome and Death 
+
+**NELA** &mdash; National Emergency Laparotomy Audit
+
+**NHS** &mdash; The UK National Health Service
+
+**NIAA** &mdash; National Institute of Academic Anaesthesia
+
+**NIHR CRN** &mdash; The National Institute of Health Research Clinical Research Network 
+
+**NRI** &mdash; Net Reclassification Improvement statistic
+
+**NSQIP** &mdash; National Surgical Quality Improvement Program 
+
+**NZ** &mdash; New Zealand
+
+**OECD** &mdash; Organisation for Economic Co-operation and Development
+
+**ONS** &mdash; Office of National Statistics
+
+**OPCS** &mdash; Office of Population Censuses and Surveys Classification of Surgical Operations and Procedures
+
+**OR** &mdash; Odds Ratio
+
+**P-POSSUM** &mdash; Portsmouth modification of the Physiological and Operative Severity Score for the enUmeration of Mortality and morbidity 
+
+**PACU** &mdash; Post Anaesthesia Care Unit
+
+**PBPP** &mdash; Scottish Public Benefit and Privacy Panel
+
+**PI** &mdash; Principal Investigator in a participating site
+
+**POMS** &mdash; Postoperative Morbidity Survey
+
+**POSSUM** &mdash; Physiological and Operative Severity Score for the enUmeration of Mortality and morbidity 
+
+**QuARC** &mdash; Quality Audit and Research Coordinator
+
+**RAFT** &mdash; Research & Audit Federation of Trainees
+
+**RCoA** &mdash; The Royal College of Anaesthetists
+
+**RCS(Eng)** &mdash; The Royal College of Surgeons of England
+
+**REC** &mdash; Research Ethics Committee
+
+**ROC** &mdash; Receiver Operating Characteristic
+
+**RR** &mdash; Relative Ratio
+
+**SNAP** &mdash; Sprint National Anaesthesia Project
+
+**SNAP-2** &mdash; The Second Sprint National Anaesthesia Project
+
+**SORT** &mdash; Surgical Outcome Risk Tool
+
+**SRS** &mdash; Surgical Risk Scale
+
+**UK** &mdash; The United Kingdom
+
+**USA** &mdash; The United States of America
+
+**WHO** &mdash; World Health Organization
+
+##### PAGE BREAK
+
+# Acknowledgements
+
+Words cannot express the love and gratitude I feel towards my wife Esther and our sons Jonathan and Timothy. Without their patience and support, I would never have been able to undertake this important research.
+
+I would also like to thank the following:
+
+My supervisors Ramani Moonesinghe and Steve Harris for their patience, wise counsel and mentorship.
+
+Members of the SNAP-2 project team and staff at the NIAA HSRC, in particular Laura Farmer, Jose Lourtie and James Goodwin for helping with so much of the logistics behind the scenes.
+
+Amaki Sogbodjor, Arun Sahni, Chris Evans, David Gilhooly, Duncan Wagstaff, Ed Palmer, Helen McKenna, James Bedford, Jia Stevens, Matt Oliver and Olly Boney, my research friends who have been on the journey along with me.
+
+My mum and dad, Fifi and Ellick, who taught me the value of hard work and perseverance.
+
+My sisters, Vivian and Ivy, for listening to me moan on occasion.
+
+All the patients whose data were contributed, and who we have the privilege to serve as clinicians and researchers.
+
+
+> *"Therefore do not worry about tomorrow, for tomorrow will worry about itself. Each day has enough trouble of its own."* &mdash; Matthew 6:34
+
+##### PAGE BREAK
