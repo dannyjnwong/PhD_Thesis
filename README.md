@@ -6,7 +6,7 @@ The thesis was written entirely in [R Markdown](https://rmarkdown.rstudio.com/),
 
 # Structure
 
-- `source/` contains the source code needed to compile the entire thesis. Within that are 12 `.Rmd1` files, each which can be knitted into their own chapter. `00-CompiledReport.Rmd` is the parent document that when knitted will stitch each chapter together into a complete document.
+- `source/` contains the source code needed to compile the entire thesis. Within that are 12 `.Rmd` files, each which can be knitted into their own chapter. `00-CompiledReport.Rmd` is the parent document that when knitted will stitch each chapter together into a complete document.
 
 - `references/` contains the bibliographic information needed for all the references and citations within the thesis. The references are stored in `SNAP2.bib`, a [BibTeX file](https://en.wikipedia.org/wiki/BibTeX), which can be found in the `references/bib/` subfolder. There is a `vancouver.csl` citation style sheet which is used when knitting the document for formatting the references according to the UCL thesis requirements.
 
