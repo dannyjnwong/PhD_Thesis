@@ -2,7 +2,7 @@
 
 This repository contains the code to reproduce my PhD thesis in its entirety. To reference my thesis use the following citation: **Wong DJN**. *Postoperative Critical Care: Resource Availability, Patient Risk and Other Factors Influencing Referral and Admission*. Doctoral thesis. UCL (University College London); 2020. Available from: https://discovery.ucl.ac.uk/id/eprint/10108589/
 
-The thesis was written entirely in [R Markdown](https://rmarkdown.rstudio.com/), and therefore contains both programming code in R used for the statistical computing and data cleaning that was needed for all analyses performed wihin the thesis, as well as the literary text of the thesis itself. For a primer on writing multi-chapter R Markdown documents, click [here](https://dannyjnwong.github.io/Writing-a-multi-chapter-document-with-R-Markdown/. 
+The thesis was written entirely in [R Markdown](https://rmarkdown.rstudio.com/), and therefore contains both programming code in R used for the statistical computing and data cleaning that was needed for all analyses performed wihin the thesis, as well as the literary text of the thesis itself. For a primer on writing multi-chapter R Markdown documents, click [here](https://dannyjnwong.github.io/Writing-a-multi-chapter-document-with-R-Markdown/). 
 
 # Structure
 
